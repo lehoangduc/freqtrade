@@ -2581,8 +2581,9 @@ options:
   -e INT, --epochs INT  Specify number of epochs (default: 100).
   --spaces SPACES [SPACES ...]
                         Specify which parameters to hyperopt. Space-separated
-                        list. Available options: all, buy, sell, roi,
-                        stoploss, trailing, protection, trades, default.
+                        list. Available builtin options (custom spaces will
+                        not be listed here): default, all, buy, sell, enter,
+                        exit, roi, stoploss, trailing, protection, trades.
                         Default: `default` - which includes all spaces except
                         for &#39;trailing&#39;, &#39;protection&#39;, and &#39;trades&#39;.
   --print-all           Print all results, not only the best ones.
@@ -2658,7 +2659,12 @@ Strategy arguments:
 <ul>
 <li>define parameters with <code>space='buy'</code> - for entry signal optimization</li>
 <li>define parameters with <code>space='sell'</code> - for exit signal optimization</li>
+<li>define parameters with <code>space='enter'</code> - for entry signal optimization</li>
+<li>define parameters with <code>space='exit'</code> - for exit signal optimization</li>
+<li>define parameters with <code>space='protection'</code> - for protection optimization</li>
+<li>define parameters with <code>space='random_spacename'</code> - for better control over which parameters are optimized together</li>
 </ul>
+<p>Pick the space name that suits the parameter best. We recommend to use either <code>buy</code> / <code>sell</code> or <code>enter</code> / <code>exit</code> for clarity (however there's no technical limitation in this regard).</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p><code>populate_indicators</code> needs to create all indicators any of the spaces may use, otherwise hyperopt will not work.</p>
@@ -2685,15 +2691,15 @@ freqtrade<span class="w"> </span>hyperopt<span class="w"> </span>--hyperopt-loss
 <p>After backtesting, the results are passed into the <a href="#loss-functions">loss function</a>, which will evaluate if this result was better or worse than previous results.<br />
 Based on the loss function result, hyperopt will determine the next set of parameters to try in the next round of backtesting.</p>
 <h3 id="configure-your-guards-and-triggers">Configure your Guards and Triggers<a class="headerlink" href="#configure-your-guards-and-triggers" title="Permanent link">&para;</a></h3>
-<p>There are two places you need to change in your strategy file to add a new buy hyperopt for testing:</p>
+<p>There are two places you need to change in your strategy file to add a new hyperopt parameter for optimization:</p>
 <ul>
 <li>Define the parameters at the class level hyperopt shall be optimizing.</li>
 <li>Within <code>populate_entry_trend()</code> - use defined parameter values instead of raw constants.</li>
 </ul>
 <p>There you have two different types of indicators: 1. <code>guards</code> and 2. <code>triggers</code>.</p>
 <ol>
-<li>Guards are conditions like "never buy if ADX &lt; 10", or never buy if current price is over EMA10.</li>
-<li>Triggers are ones that actually trigger buy in specific moment, like "buy when EMA5 crosses over EMA10" or "buy when close price touches lower Bollinger band".</li>
+<li>Guards are conditions like "never enter if ADX &lt; 10", or never enter if current price is over EMA10.</li>
+<li>Triggers are ones that actually trigger entry in specific moment, like "enter when EMA5 crosses over EMA10" or "enter when close price touches lower Bollinger band".</li>
 </ol>
 <div class="admonition hint">
 <p class="admonition-title">Guards and Triggers</p>
@@ -2753,9 +2759,13 @@ We use these to either enable or disable the ADX and RSI guards.
 The last one we call <code>trigger</code> and use it to decide which buy trigger we want to use.</p>
 <div class="admonition note">
 <p class="admonition-title">Parameter space assignment</p>
-<p>Parameters must either be assigned to a variable named <code>buy_*</code> or <code>sell_*</code> - or contain <code>space='buy'</code> | <code>space='sell'</code> to be assigned to a space correctly.
-If no parameter is available for a space, you'll receive the error that no space was found when running hyperopt.<br />
-Parameters with unclear space (e.g. <code>adx_period = IntParameter(4, 24, default=14)</code> - no explicit nor implicit space) will not be detected and will therefore be ignored.</p>
+<ul>
+<li>Parameters must either be assigned to a variable named <code>buy_*</code>, <code>sell_*</code>, <code>enter_*</code> or <code>exit_*</code> or <code>protection_*</code> - or contain have a space assigned explicitly via parameter (<code>space='buy'</code>, <code>space='sell'</code>, <code>space='protection'</code>).  </li>
+<li>Parameters with conflicting assignments (e.g. <code>buy_adx = IntParameter(4, 24, default=14, space='sell')</code>) will use the explicit space assignment.  </li>
+<li>If no parameter is available for a space, you'll receive the error that no space was found when running hyperopt.<br />
+Parameters with unclear space (e.g. <code>adx_period = IntParameter(4, 24, default=14)</code> - no explicit nor implicit space) will not be detected and will therefore be ignored.
+Spaces can also be custom named (e.g. <code>space='my_custom_space'</code>), with the only limitation that the space name cannot be <code>all</code>, <code>default</code> - and must result in a valid python identifier.</li>
+</ul>
 </div>
 <p>So let's write the buy strategy using these values:</p>
 <div class="highlight"><pre><span></span><code>    <span class="k">def</span><span class="w"> </span><span class="nf">populate_entry_trend</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dataframe</span><span class="p">:</span> <span class="n">DataFrame</span><span class="p">,</span> <span class="n">metadata</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DataFrame</span><span class="p">:</span>
@@ -3068,20 +3078,23 @@ For example, to use one month of data, pass <code>--timerange 20210101-20210201<
 </code></pre></div>
 <h3 id="running-hyperopt-with-smaller-search-space">Running Hyperopt with Smaller Search Space<a class="headerlink" href="#running-hyperopt-with-smaller-search-space" title="Permanent link">&para;</a></h3>
 <p>Use the <code>--spaces</code> option to limit the search space used by hyperopt.
-Letting Hyperopt optimize everything is a huuuuge search space.
-Often it might make more sense to start by just searching for initial buy algorithm.
-Or maybe you just want to optimize your stoploss or roi table for that awesome new buy strategy you have.</p>
+Letting Hyperopt optimize everything is often a huuuuge search space.
+Often it might make more sense to start by just searching for initial entry algorithm.
+Or maybe you just want to optimize your stoploss or roi table for that awesome new strategy you have.</p>
 <p>Legal values are:</p>
 <ul>
-<li><code>all</code>: optimize everything</li>
+<li><code>all</code>: optimize everything (including custom spaces)</li>
 <li><code>buy</code>: just search for a new buy strategy</li>
 <li><code>sell</code>: just search for a new sell strategy</li>
+<li><code>enter</code>: just search for a new entry logic</li>
+<li><code>exit</code>: just search for a new entry logic</li>
 <li><code>roi</code>: just optimize the minimal profit table for your strategy</li>
 <li><code>stoploss</code>: search for the best stoploss value</li>
 <li><code>trailing</code>: search for the best trailing stop values</li>
 <li><code>trades</code>: search for the best max open trades values</li>
 <li><code>protection</code>: search for the best protection parameters (read the <a href="#optimizing-protections">protections section</a> on how to properly define these)</li>
 <li><code>default</code>: <code>all</code> except <code>trailing</code>, <code>trades</code> and <code>protection</code></li>
+<li><code>custom_space_name</code>: any custom space used by any parameter in your strategy</li>
 <li>space-separated list of any of the above values for example <code>--spaces roi stoploss</code></li>
 </ul>
 <p>The default Hyperopt Search Space, used when no <code>--space</code> command line option is specified, does not include the <code>trailing</code> hyperspace. We recommend you to run optimization for the <code>trailing</code> hyperspace separately, when the best parameters for other hyperspaces were found, validated and pasted into your custom strategy.</p>
