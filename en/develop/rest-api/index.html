@@ -2120,6 +2120,10 @@ to do so, please use the following:</p>
 <span class="go">        :param pair: Pair to buy (ETH/BTC)</span>
 <span class="go">        :param side: &#39;long&#39; or &#39;short&#39;</span>
 <span class="go">        :param price: Optional - price to buy</span>
+<span class="go">        :param order_type: Optional keyword argument - &#39;limit&#39; or &#39;market&#39;</span>
+<span class="go">        :param stake_amount: Optional keyword argument - stake amount (as float)</span>
+<span class="go">        :param leverage: Optional keyword argument - leverage (as float)</span>
+<span class="go">        :param enter_tag: Optional keyword argument - entry tag (as string, default: &#39;force_enter&#39;)</span>
 
 <span class="go">forceexit</span>
 <span class="go">    Force-exit a trade.</span>
@@ -2369,7 +2373,7 @@ All endpoints in the below table need to be prefixed with the base URL of the AP
 <tr>
 <td><code>/forceenter</code></td>
 <td>POST</td>
-<td>Instantly enters the given pair. Side is optional and is either <code>long</code> or <code>short</code> (default is <code>long</code>). Rate is optional. (<code>force_entry_enable</code> must be set to True)<br/><em>Params:</em><br/>- <code>&lt;pair&gt;</code> (<code>str</code>)<br/>- <code>&lt;side&gt;</code> (<code>str</code>)<br/>- <code>[rate]</code> (<code>float</code>)</td>
+<td>Instantly enters the given pair. Side is optional and is either <code>long</code> or <code>short</code> (default is <code>long</code>). Price, stake amount, entry tag and leverage are optional. Order type is optional and is either <code>market</code> or <code>long</code> (default using the value set in config). (<code>force_entry_enable</code> must be set to True)<br/><em>Params:</em><br/>- <code>&lt;pair&gt;</code> (<code>str</code>)<br/>- <code>&lt;side&gt;</code> (<code>str</code>)<br/>- <code>[price]</code> (<code>float</code>)<br/>- <code>[ordertype]</code> (<code>str</code>)<br/>- <code>[stakeamount]</code> (<code>float</code>)<br/>- <code>[entry_tag]</code> (<code>str</code>)<br/>- <code>[leverage]</code> (<code>float</code>)</td>
 </tr>
 <tr>
 <td><code>/performance</code></td>
