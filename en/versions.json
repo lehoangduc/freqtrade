@@ -7,11 +7,16 @@
     ]
   },
   {
-    "version": "2025.10",
-    "title": "2025.10",
+    "version": "2025.11",
+    "title": "2025.11",
     "aliases": [
       "stable"
     ]
+  },
+  {
+    "version": "2025.10",
+    "title": "2025.10",
+    "aliases": []
   },
   {
     "version": "2025.9.1",
