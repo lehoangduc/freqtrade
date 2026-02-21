@@ -2465,11 +2465,11 @@ To learn how to get data for the pairs and exchange you're interested in, head o
 <span class="go">  --export {none,trades,signals}</span>
 <span class="go">                        Export backtest results (default: trades).</span>
 <span class="go">  --backtest-filename, --export-filename PATH</span>
-<span class="go">                        Use this filename for backtest results.Example:</span>
-<span class="go">                        `--backtest-</span>
-<span class="go">                        filename=backtest_results_2020-09-27_16-20-48.json`.</span>
-<span class="go">                        Assumes either `user_data/backtest_results/` or</span>
-<span class="go">                        `--export-directory` as base directory.</span>
+<span class="go">                        DEPRECATED: This option is deprecated for backtesting</span>
+<span class="go">                        and will be removed in a future release. Using a</span>
+<span class="go">                        custom filename for backtest results is no longer</span>
+<span class="go">                        supported. Use `--backtest-directory` to specify the</span>
+<span class="go">                        directory.</span>
 <span class="go">  --backtest-directory, --export-directory PATH</span>
 <span class="go">                        Directory to use for backtest results. Example:</span>
 <span class="go">                        `--export-directory=user_data/backtest_results/`.</span>
