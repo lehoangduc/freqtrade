@@ -106,7 +106,7 @@
                 "class": "logging.handlers.RotatingFileHandler",
                 "formatter": "standard",
                 "filename": "user_data/logs/freqtrade-spot.log",
-                "maxBytes": 2097152,
+                "maxBytes": 10485760,
                 "backupCount": 3
             }
         },

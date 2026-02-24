@@ -36,7 +36,13 @@ from telegram.helpers import escape_markdown
 
 from freqtrade.__init__ import __version__
 from freqtrade.constants import DUST_PER_COIN, Config
-from freqtrade.enums import MarketDirection, RPCMessageType, SignalDirection, TradingMode
+from freqtrade.enums import (
+    NO_ECHO_MESSAGES,
+    MarketDirection,
+    RPCMessageType,
+    SignalDirection,
+    TradingMode,
+)
 from freqtrade.exceptions import OperationalException
 from freqtrade.misc import chunks, plural
 from freqtrade.persistence import Trade
@@ -582,6 +588,8 @@ class Telegram(RPCHandler):
             message = f"{msg['status']}"
         elif msg["type"] == RPCMessageType.STRATEGY_MSG:
             message = f"{msg['msg']}"
+        elif msg["type"] in NO_ECHO_MESSAGES:
+            pass  # These messages are intentionally not handled by Telegram
         else:
             logger.debug("Unknown message type: %s", msg["type"])
             return None

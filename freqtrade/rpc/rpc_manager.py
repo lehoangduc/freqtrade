@@ -99,7 +99,8 @@ class RPCManager:
         if msg.get("type") not in NO_ECHO_MESSAGES:
             logger.info("Sending rpc message: %s", msg)
         for mod in self.registered_modules:
-            logger.debug("Forwarding message to rpc.%s", mod.name)
+            if msg.get("type") not in NO_ECHO_MESSAGES:
+                logger.debug("Forwarding message to rpc.%s", mod.name)
             try:
                 mod.send_msg(msg)
             except NotImplementedError:
