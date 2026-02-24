@@ -59,6 +59,20 @@ start_disk_monitor() {
     fi
 }
 
+if [ "$1" == "-r" ] || [ "$1" == "--restart" ]; then
+    echo "Restarting Freqtrade background process..."
+    pkill -f "freqtrade trade"
+    if [ $? -eq 0 ]; then
+        echo "Bot stopped successfully. Waiting 3 seconds for cleanup..."
+        sleep 3
+    else
+        echo "No running Freqtrade bot found."
+    fi
+
+    # Change the argument to -d so the script falls through to the detached start block below
+    set -- "-d"
+fi
+
 if [ "$1" == "-k" ] || [ "$1" == "--kill" ] || [ "$1" == "--stop" ]; then
     echo "Stopping Freqtrade background process..."
     pkill -f "freqtrade trade"
