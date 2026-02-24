@@ -99,7 +99,7 @@ if [ "$1" == "-d" ] || [ "$1" == "--detached" ]; then
         --db-url sqlite:///user_data/tradesv3-spot.sqlite \
         --config user_data/config.json \
         --config user_data/config_spot.json \
-        --strategy CustomBestStrategy > /dev/null 2> user_data/logs/startup.log &
+        --strategy CustomBestStrategy &
 
     echo "Bot is running. PID: $!"
     echo "To view logs, run: tail -f user_data/logs/freqtrade-spot.log"
