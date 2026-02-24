@@ -19,6 +19,17 @@ else
     exit 1
 fi
 
+if [ "$1" == "-k" ] || [ "$1" == "--kill" ] || [ "$1" == "--stop" ]; then
+    echo "Stopping Freqtrade background process..."
+    pkill -f "freqtrade trade"
+    if [ $? -eq 0 ]; then
+        echo "Bot stopped successfully."
+    else
+        echo "No running Freqtrade bot found."
+    fi
+    exit 0
+fi
+
 if [ "$1" == "-d" ] || [ "$1" == "--detached" ]; then
     echo "Starting Freqtrade in the background..."
     nohup freqtrade trade -v \
