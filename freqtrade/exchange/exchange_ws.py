@@ -170,19 +170,40 @@ class ExchangeWS:
     async def _continuously_async_watch_ohlcv(
         self, pair: str, timeframe: str, candle_type: CandleType
     ) -> None:
+        # Exponential back-off state for transient network errors
+        _retry_delay = 5  # seconds, doubles up to _retry_delay_max on repeated failures
+        _retry_delay_max = 60
         try:
             while (pair, timeframe, candle_type) in self._klines_watching:
-                start = dt_ts()
-                data = await self._ccxt_object.watch_ohlcv(pair, timeframe)
-                self.klines_last_refresh[(pair, timeframe, candle_type)] = dt_ts()
-                logger.debug(
-                    f"watch done {pair}, {timeframe}, data {len(data)} "
-                    f"in {(dt_ts() - start) / 1000:.3f}s"
-                )
+                try:
+                    start = dt_ts()
+                    data = await self._ccxt_object.watch_ohlcv(pair, timeframe)
+                    self.klines_last_refresh[(pair, timeframe, candle_type)] = dt_ts()
+                    logger.debug(
+                        f"watch done {pair}, {timeframe}, data {len(data)} "
+                        f"in {(dt_ts() - start) / 1000:.3f}s"
+                    )
+                    # Reset back-off on success
+                    _retry_delay = 5
+                except ccxt.ExchangeClosedByUser:
+                    raise  # Let the outer handler deal with this cleanly
+                except ccxt.NetworkError as e:
+                    # Transient connection error (e.g. close code 1006 from remote server).
+                    # Log and retry after a short delay instead of killing the watcher.
+                    logger.warning(
+                        f"Network error in continuously_async_watch_ohlcv for {pair}, "
+                        f"{timeframe} - will retry in {_retry_delay}s: {e}"
+                    )
+                    await asyncio.sleep(_retry_delay)
+                    _retry_delay = min(_retry_delay * 2, _retry_delay_max)
+                except ccxt.BaseError:
+                    logger.exception(
+                        f"Exception in continuously_async_watch_ohlcv for {pair}, {timeframe}"
+                    )
+                    # Non-network ccxt error - stop watching this pair
+                    break
         except ccxt.ExchangeClosedByUser:
             logger.debug("Exchange connection closed by user")
-        except ccxt.BaseError:
-            logger.exception(f"Exception in continuously_async_watch_ohlcv for {pair}, {timeframe}")
         finally:
             self._klines_watching.discard((pair, timeframe, candle_type))
 
