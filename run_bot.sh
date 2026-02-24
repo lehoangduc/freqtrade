@@ -63,8 +63,8 @@ if [ "$1" == "-r" ] || [ "$1" == "--restart" ]; then
     echo "Restarting Freqtrade background process..."
     pkill -f "freqtrade trade"
     if [ $? -eq 0 ]; then
-        echo "Bot stopped successfully. Waiting 3 seconds for cleanup..."
-        sleep 3
+        echo "Bot stopped successfully. Waiting 10 seconds for cleanup..."
+        sleep 10
     else
         echo "No running Freqtrade bot found."
     fi
