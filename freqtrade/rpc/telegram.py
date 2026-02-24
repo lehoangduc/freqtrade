@@ -546,6 +546,7 @@ class Telegram(RPCHandler):
         return profit_fiat_extra
 
     def compose_message(self, msg: RPCSendMsg) -> str | None:
+        message: str = ""
         if msg["type"] == RPCMessageType.ENTRY or msg["type"] == RPCMessageType.ENTRY_FILL:
             message = self._format_entry_msg(msg)
 
@@ -589,7 +590,7 @@ class Telegram(RPCHandler):
         elif msg["type"] == RPCMessageType.STRATEGY_MSG:
             message = f"{msg['msg']}"
         elif msg["type"] in NO_ECHO_MESSAGES:
-            pass  # These messages are intentionally not handled by Telegram
+            return None  # These messages are intentionally not handled by Telegram
         else:
             logger.debug("Unknown message type: %s", msg["type"])
             return None
