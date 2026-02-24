@@ -71,6 +71,7 @@ dependencies = [
   "pytz",
   "packaging",
   "freqtrade-client",
+  "google-genai",
 ]
 
 [project.optional-dependencies]

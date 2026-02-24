@@ -60,3 +60,4 @@ janus==2.0.0
 
 ast-comments==1.2.3
 packaging==25.0
+google-genai

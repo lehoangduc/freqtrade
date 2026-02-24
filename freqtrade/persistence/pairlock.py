@@ -6,6 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from freqtrade.constants import DATETIME_PRINT_FORMAT
 from freqtrade.persistence.base import ModelBase, SessionType
+from freqtrade.util import format_date
 
 
 class PairLock(ModelBase):
@@ -30,8 +31,8 @@ class PairLock(ModelBase):
     active: Mapped[bool] = mapped_column(nullable=False, default=True, index=True)
 
     def __repr__(self) -> str:
-        lock_time = self.lock_time.strftime(DATETIME_PRINT_FORMAT)
-        lock_end_time = self.lock_end_time.strftime(DATETIME_PRINT_FORMAT)
+        lock_time = format_date(self.lock_time)
+        lock_end_time = format_date(self.lock_end_time)
         return (
             f"PairLock(id={self.id}, pair={self.pair}, side={self.side}, lock_time={lock_time}, "
             f"lock_end_time={lock_end_time}, reason={self.reason}, active={self.active})"
@@ -68,9 +69,9 @@ class PairLock(ModelBase):
         return {
             "id": self.id,
             "pair": self.pair,
-            "lock_time": self.lock_time.strftime(DATETIME_PRINT_FORMAT),
+            "lock_time": format_date(self.lock_time),
             "lock_timestamp": int(self.lock_time.replace(tzinfo=UTC).timestamp() * 1000),
-            "lock_end_time": self.lock_end_time.strftime(DATETIME_PRINT_FORMAT),
+            "lock_end_time": format_date(self.lock_end_time),
             "lock_end_timestamp": int(self.lock_end_time.replace(tzinfo=UTC).timestamp() * 1000),
             "reason": self.reason,
             "side": self.side,

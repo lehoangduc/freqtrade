@@ -41,7 +41,7 @@ from freqtrade.strategy.informative_decorator import (
 )
 from freqtrade.strategy.strategy_validation import StrategyResultValidator
 from freqtrade.strategy.strategy_wrapper import strategy_safe_wrapper
-from freqtrade.util import dt_now, dt_ts
+from freqtrade.util import dt_now, dt_ts, format_date
 from freqtrade.wallets import Wallets
 
 
@@ -1339,7 +1339,9 @@ class IStrategy(ABC, HyperStrategyMixin):
         # Tags can be None, which does not resolve to False.
         exit_tag = exit_tag if isinstance(exit_tag, str) and exit_tag != "nan" else None
 
-        logger.debug(f"exit-trigger: {latest['date']} (pair={pair}) enter={enter} exit={exit_}")
+        logger.debug(
+            f"exit-trigger: {format_date(_latest_date)} (pair={pair}) enter={enter} exit={exit_}"
+        )
 
         return enter, exit_, exit_tag
 
@@ -1394,7 +1396,7 @@ class IStrategy(ABC, HyperStrategyMixin):
             return None, enter_tag
 
         logger.debug(
-            f"entry trigger: {latest['date']} (pair={pair}) "
+            f"entry trigger: {format_date(latest_date)} (pair={pair}) "
             f"enter={enter_long} enter_tag_value={enter_tag}"
         )
         return enter_signal, enter_tag

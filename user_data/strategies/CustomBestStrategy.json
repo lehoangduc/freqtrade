@@ -1,0 +1,33 @@
+{
+  "strategy_name": "CustomBestStrategy",
+  "params": {
+    "roi": {
+      "0": 0.209,
+      "30": 0.061,
+      "46": 0.015,
+      "145": 0
+    },
+    "stoploss": {
+      "stoploss": -0.13
+    },
+    "trailing": {
+      "trailing_stop": true,
+      "trailing_stop_positive": 0.01,
+      "trailing_stop_positive_offset": 0.02,
+      "trailing_only_offset_is_reached": true
+    },
+    "max_open_trades": {
+      "max_open_trades": 5
+    },
+    "buy": {
+      "buy_mfi": 11,
+      "buy_rsi": 18
+    },
+    "sell": {
+      "sell_mfi": 50,
+      "sell_rsi": 67
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2026-02-23 03:32:35.786875+00:00"
+}

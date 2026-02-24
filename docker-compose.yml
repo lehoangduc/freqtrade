@@ -30,7 +30,15 @@ services:
     # Default command used when running `docker compose up`
     command: >
       trade
-      --logfile /freqtrade/user_data/logs/freqtrade.log
-      --db-url sqlite:////freqtrade/user_data/tradesv3.sqlite
+      --logfile /freqtrade/user_data/logs/freqtrade-spot.log
+      --db-url sqlite:////freqtrade/user_data/tradesv3-spot.sqlite
       --config /freqtrade/user_data/config.json
-      --strategy SampleStrategy
+      --config /freqtrade/user_data/config_spot.json
+      --strategy CustomBestStrategy
+    env_file:
+      - .env
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - TZ=${TZ:-Asia/Ho_Chi_Minh}
+      - FREQTRADE__TELEGRAM__TOKEN=${FREQTRADE__TELEGRAM__TOKEN}
+      - FREQTRADE__TELEGRAM__CHAT_ID=${FREQTRADE__TELEGRAM__CHAT_ID}

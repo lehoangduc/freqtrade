@@ -1,10 +1,17 @@
+import os
 import re
+import time
 from datetime import UTC, datetime
-from time import time
+from time import time as time_func
 
 import humanize
 
 from freqtrade.constants import DATETIME_PRINT_FORMAT
+
+
+# Initialize local timezone from TZ environment variable if available
+if os.name != "nt" and "TZ" in os.environ:
+    time.tzset()
 
 
 def dt_now() -> datetime:
@@ -32,7 +39,7 @@ def dt_ts(dt: datetime | None = None) -> int:
     """
     if dt:
         return int(dt.timestamp() * 1000)
-    return int(time() * 1000)
+    return int(time_func() * 1000)
 
 
 def dt_ts_def(dt: datetime | None, default: int = 0) -> int:
@@ -98,6 +105,8 @@ def format_date(date: datetime | None, fallback: str = "") -> str:
     :param fallback: value to return if date is None
     """
     if date:
+        if date.tzinfo:
+            date = date.astimezone()
         return date.strftime(DATETIME_PRINT_FORMAT)
     return fallback
 
@@ -107,7 +116,7 @@ def format_ms_time(date: int | float) -> str:
     convert MS date to readable format.
     : epoch-string in ms
     """
-    return dt_from_ts(date).strftime("%Y-%m-%dT%H:%M:%S")
+    return dt_from_ts(date).astimezone().strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def format_ms_time_det(date: int | float) -> str:
@@ -116,4 +125,4 @@ def format_ms_time_det(date: int | float) -> str:
     : epoch-string in ms
     """
     # return dt_from_ts(date).isoformat(timespec="milliseconds")
-    return dt_from_ts(date).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+    return dt_from_ts(date).astimezone().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]

@@ -623,7 +623,7 @@ class Telegram(RPCHandler):
             return
 
         message = self.compose_message(deepcopy(msg))
-        if message:
+        if message and self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(
                 self._send_msg(message, disable_notification=(noti == "silent")), self._loop
             )

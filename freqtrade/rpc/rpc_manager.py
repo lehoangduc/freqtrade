@@ -4,11 +4,16 @@ This module contains class to manage RPC communications (Telegram, API, ...)
 
 import logging
 from collections import deque
+from typing import TYPE_CHECKING
 
 from freqtrade.constants import Config
 from freqtrade.enums import NO_ECHO_MESSAGES, RPCMessageType
 from freqtrade.rpc import RPC, RPCHandler
 from freqtrade.rpc.rpc_types import RPCSendMsg
+
+
+if TYPE_CHECKING:
+    from freqtrade.freqtradebot import FreqtradeBot
 
 
 logger = logging.getLogger(__name__)
@@ -19,7 +24,7 @@ class RPCManager:
     Class to manage RPC objects (Telegram, API, ...)
     """
 
-    def __init__(self, freqtrade) -> None:
+    def __init__(self, freqtrade: "FreqtradeBot") -> None:
         """Initializes all enabled rpc modules"""
         self.registered_modules: list[RPCHandler] = []
         self._rpc = RPC(freqtrade)
@@ -54,9 +59,28 @@ class RPCManager:
             apiserver.add_rpc_handler(self._rpc)
             self.registered_modules.append(apiserver)
 
+        # Enable logging to RPC
+        if (
+            config.get("telegram", {}).get("enabled", False)
+            or config.get("discord", {}).get("enabled", False)
+            or config.get("webhook", {}).get("enabled", False)
+        ):
+            from freqtrade.loggers.rpc_handler import RPCHandler as RPCLogHandler
+
+            self._rpc_log_handler = RPCLogHandler(self)
+            self._rpc_log_handler.setLevel(logging.WARNING)
+            # Only log freqtrade messages to avoid spam from libraries
+            logging.getLogger("freqtrade").addHandler(self._rpc_log_handler)
+
     def cleanup(self) -> None:
         """Stops all enabled rpc modules"""
         logger.info("Cleaning up rpc modules ...")
+
+        # Remove logging handler first to avoid sending cleanup logs to RPC
+        if hasattr(self, "_rpc_log_handler"):
+            logging.getLogger("freqtrade").removeHandler(self._rpc_log_handler)
+            self._rpc_log_handler.close()
+            del self._rpc_log_handler
         while self.registered_modules:
             mod = self.registered_modules.pop()
             logger.info("Cleaning up rpc.%s ...", mod.name)
@@ -132,7 +156,8 @@ class RPCManager:
             {
                 "type": RPCMessageType.STARTUP,
                 "status": f"Searching for {stake_currency} pairs to buy and sell "
-                f"based on {pairlist.short_desc()}",
+                f"based on {pairlist.short_desc()}\n"
+                f"*Whitelist ({len(pairlist.whitelist)} pairs):* `{pairlist.whitelist}`",
             }
         )
         if len(protections.name_list) > 0:

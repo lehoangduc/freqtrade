@@ -1,0 +1,32 @@
+{
+    "trading_mode": "spot",
+    "margin_mode": "",
+    "order_types": {
+        "entry": "limit",
+        "exit": "limit",
+        "stoploss": "market",
+        "stoploss_on_exchange": false
+    },
+    "exchange": {
+        "pair_blacklist": [
+            "BNB/USDT",
+            "^(BUSD|USDC|USDP|TUSD|EUR|USDT|GBP)/USDT",
+            ".*(UP|DOWN|BULL|BEAR)/USDT"
+        ]
+    },
+    "pairlists": [
+        {
+            "method": "VolumePairList",
+            "number_assets": 40,
+            "sort_key": "quoteVolume",
+            "min_value": 1500000,
+            "refresh_period": 3600,
+            "lookback_timeframe": "1h",
+            "lookback_period": 24
+        },
+        {"method": "PrecisionFilter"},
+        {"method": "PriceFilter", "low_price_ratio": 0.005},
+        {"method": "SpreadFilter", "max_spread_ratio": 0.0025},
+        {"method": "ShuffleFilter", "seed": 42}
+    ]
+}

@@ -5,8 +5,15 @@ Read the documentation to know what cli arguments you need.
 """
 
 import logging
+import os
 import sys
+import time
 from typing import Any
+
+
+# Initialize local timezone from TZ environment variable if available
+if os.name != "nt" and "TZ" in os.environ:
+    time.tzset()
 
 
 # check min. python version

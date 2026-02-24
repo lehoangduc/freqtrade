@@ -62,7 +62,7 @@ from freqtrade.rpc.rpc_types import (
 )
 from freqtrade.strategy.interface import IStrategy
 from freqtrade.strategy.strategy_wrapper import strategy_safe_wrapper
-from freqtrade.util import FtPrecise, MeasureTime, PeriodicCache, dt_from_ts, dt_now
+from freqtrade.util import FtPrecise, MeasureTime, PeriodicCache, dt_from_ts, dt_now, format_date
 from freqtrade.util.migrations import migrate_live_content
 from freqtrade.wallets import Wallets
 
@@ -630,7 +630,7 @@ class FreqtradeBot(LoggingMixin):
             if lock:
                 self.log_once(
                     f"Global pairlock active until "
-                    f"{lock.lock_end_time.strftime(constants.DATETIME_PRINT_FORMAT)}. "
+                    f"{format_date(lock.lock_end_time)}. "
                     f"Not creating new trades, reason: {lock.reason}.",
                     logger.info,
                 )
@@ -681,7 +681,7 @@ class FreqtradeBot(LoggingMixin):
                 if lock:
                     self.log_once(
                         f"Pair {pair} {lock.side} is locked until "
-                        f"{lock.lock_end_time.strftime(constants.DATETIME_PRINT_FORMAT)} "
+                        f"{format_date(lock.lock_end_time)} "
                         f"due to {lock.reason}.",
                         logger.info,
                     )
