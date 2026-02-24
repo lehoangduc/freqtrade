@@ -28,18 +28,26 @@ start_disk_monitor() {
                 if ! pgrep -f "freqtrade trade" > /dev/null; then
                     exit 0
                 fi
-                
+
                 USED_KB=$(df -k / | awk 'NR==2 {print $3}')
                 TOTAL_KB=$(df -k / | awk 'NR==2 {print $2}')
                 USED_GB=$(awk "BEGIN {printf \"%.2f\", $USED_KB/1024/1024}")
                 TOTAL_GB=$(awk "BEGIN {printf \"%.2f\", $TOTAL_KB/1024/1024}")
                 PCT=$(df -k / | awk 'NR==2 {print $5}')
-                MSG="💾 Disk Usage: ${USED_GB}GB / ${TOTAL_GB}GB (${PCT})"
-                
+
+                LOG_DIR="user_data/logs"
+                if [ -d "$LOG_DIR" ]; then
+                    LOG_SIZE=$(du -sh "$LOG_DIR" 2>/dev/null | awk '{print $1}')
+                else
+                    LOG_SIZE="0"
+                fi
+
+                MSG="💾 Disk Usage: ${USED_GB}GB / ${TOTAL_GB}GB (${PCT})%0A📑 Logs Size: ${LOG_SIZE}"
+
                 curl -s -X POST "https://api.telegram.org/bot${FREQTRADE__TELEGRAM__TOKEN}/sendMessage" \
                     -d chat_id="${FREQTRADE__TELEGRAM__CHAT_ID}" \
                     -d text="$MSG" > /dev/null
-                
+
                 for ((i=0; i<$((DISK_USAGE_INTERVAL_MINUTES * 60)); i++)); do
                     sleep 1
                     if ! pgrep -f "freqtrade trade" > /dev/null; then
