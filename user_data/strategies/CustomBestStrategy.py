@@ -15,6 +15,8 @@ import talib.abstract as ta
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 import os
 import json
+import time
+import shutil
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
@@ -61,6 +63,9 @@ class CustomBestStrategy(IStrategy):
         if config.get("trading_mode", "spot") != "futures":
             self.can_short = False
 
+        # Track last disk usage notification
+        self._last_disk_usage_time = 0.0
+
         # Configure Google Generative AI for trade confirmation
         api_key = os.environ.get("GOOGLE_API_KEY")
         if api_key:
@@ -78,6 +83,38 @@ class CustomBestStrategy(IStrategy):
         else:
             self.llm_enabled = False
             logger.warning("⚠️ GOOGLE_API_KEY not found in environment. LLM integration disabled.")
+
+    def bot_loop_start(self, current_time: datetime, **kwargs) -> None:
+        """
+        Called at the start of each bot loop. We use this to run lightweight
+        periodic background tasks like sending disk usage to Telegram.
+        """
+        interval_str = os.environ.get("DISK_USAGE_INTERVAL_MINUTES", "")
+        if not interval_str.isdigit():
+            return
+
+        interval = int(interval_str)
+        if interval <= 0:
+            return
+
+        now = time.time()
+        # If it's the very first loop, or if the interval has passed
+        if self._last_disk_usage_time == 0.0 or now - self._last_disk_usage_time >= interval * 60:
+            self._last_disk_usage_time = now
+
+            try:
+                total, used, free = shutil.disk_usage("/")
+                used_gb = used / (1024**3)
+                total_gb = total / (1024**3)
+                pct = (used / total) * 100
+
+                # Only send if Telegram is enabled in config
+                if self.config.get("telegram", {}).get("enabled", False):
+                    msg = f"💾 Disk Usage: {used_gb:.2f}GB / {total_gb:.2f}GB ({pct:.1f}%)"
+                    logger.info(msg)
+                    self.dp.send_msg(msg)
+            except Exception as e:
+                logger.error(f"Failed to check disk usage: {e}")
 
     # Minimal ROI designed for the strategy
     # Take profit dynamically
@@ -295,7 +332,9 @@ class CustomBestStrategy(IStrategy):
         dataframe.loc[
             (
                 (dataframe["rsi"] < dataframe["dynamic_buy_rsi"])
-                & (dataframe["mfi"] < long_mfi_limit)  # Guard: Money is extremely oversold  # noqa: E501
+                & (
+                    dataframe["mfi"] < long_mfi_limit
+                )  # Guard: Money is extremely oversold  # noqa: E501
                 & (dataframe["tema"] <= dataframe["bb_middleband"])
                 & (
                     dataframe["close"] < dataframe["vwap"]
