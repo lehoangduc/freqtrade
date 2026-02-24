@@ -10,13 +10,20 @@ fi
 # Move to the script's directory (the project root)
 cd "$(dirname "$0")"
 
-# Check for virtual environment
-if [ -f ".venv/bin/activate" ]; then
-    echo "Activating virtual environment..."
-    source .venv/bin/activate
-else
-    echo "Error: .venv/bin/activate not found. Did you run ./setup.sh --install?"
-    exit 1
+# Activate environment if needed
+if [[ "$CONDA_DEFAULT_ENV" != "freqtrade" ]]; then
+    if command -v conda &> /dev/null; then
+        echo "Activating conda environment 'freqtrade'..."
+        # Setup conda for bash script execution
+        eval "$(conda shell.bash hook)"
+        conda activate freqtrade || { echo "Error: Conda 'freqtrade' env not found."; exit 1; }
+    elif [ -f ".venv/bin/activate" ]; then
+        echo "Activating virtual environment..."
+        source .venv/bin/activate
+    else
+        echo "Error: Neither Conda nor .venv/bin/activate found."
+        exit 1
+    fi
 fi
 
 start_disk_monitor() {
