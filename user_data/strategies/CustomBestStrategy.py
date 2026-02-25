@@ -357,20 +357,19 @@ class CustomBestStrategy(IStrategy):
 
         # ============================================================
         # SIGNAL 4 — MOMENTUM: Breakout in confirmed uptrend
-        # Catches coins already pumping. Uses close > ema_50_1h
-        # (faster than golden cross which takes weeks to form).
-        # Gemini AI is the key filter to avoid exhausted pumps.
+        # Catches coins pumping with strong volume. Gemini AI is the
+        # key filter to avoid buying exhausted pumps.
         # ============================================================
         dataframe.loc[
             (
                 (dataframe["enter_long"] == 0)  # Don't override previous signals
-                & (dataframe["close"] > dataframe["bb_upperband"])  # Breaking out above BB
                 & (dataframe["close"] > dataframe["vwap"])  # Above VWAP (strength)
                 & (dataframe["close"] > dataframe["ema_50_1h"])  # Price above 1h EMA50
-                & (dataframe["rsi"] > 50)  # Momentum present
-                & (dataframe["rsi"] < 70)  # But not exhausted yet
+                & (dataframe["close"] > dataframe["bb_middleband"])  # Above BB mid (momentum)
+                & (dataframe["rsi"] > 55)  # Clear momentum
+                & (dataframe["rsi"] < 75)  # Not fully exhausted
                 & (dataframe["volume"] > dataframe["volume_mean"])  # Above-average volume
-                & (dataframe["adx"] > 25)  # Strong trend (not sideways chop)
+                & (dataframe["adx"] > 20)  # Trending (not sideways chop)
                 & (dataframe["volume"] > 0)
                 & (dataframe["btc_safe_1h"] == 1.0)
             ),
@@ -378,26 +377,27 @@ class CustomBestStrategy(IStrategy):
         ] = (1, "momentum_breakout")
 
         # ============================================================
-        # SIGNAL 5 — PULLBACK: Buy the dip within a 5m uptrend
-        # The most frequent signal. Catches micro-pullbacks to the
-        # 20-EMA support line when short-term trend is up.
-        # Relies heavily on Gemini AI to filter out false pullbacks.
+        # SIGNAL 5 — TREND FOLLOW: Simple trend entry
+        # The broadest signal. Fires when a coin is in a confirmed
+        # 5m uptrend above macro support. Gemini AI is the PRIMARY
+        # quality gate here — it decides if THIS candle is a good
+        # entry point within the trend.
         # ============================================================
         dataframe.loc[
             (
                 (dataframe["enter_long"] == 0)  # Don't override previous signals
-                & (dataframe["ema_20"] > dataframe["ema_50_5m"])  # 5m uptrend (EMA20 > EMA50)
-                & (dataframe["close"] > dataframe["ema_50_5m"])  # Price above 5m EMA50
-                & (dataframe["close"] <= dataframe["ema_20"] * 1.005)  # Pulled back near EMA20
-                & (dataframe["close"] > dataframe["ema_50_1h"])  # Above 1h EMA50 support
-                & (dataframe["rsi"] > 40)  # Not oversold (we want trending)
-                & (dataframe["rsi"] < 60)  # Not overbought (room to run)
+                & (dataframe["ema_20"] > dataframe["ema_50_5m"])  # 5m uptrend confirmed
+                & (dataframe["close"] > dataframe["ema_20"])  # Price above 5m EMA20
+                & (dataframe["close"] > dataframe["ema_50_1h"])  # Above 1h macro support
+                & (dataframe["rsi"] > 40)  # Not oversold
+                & (dataframe["rsi"] < 70)  # Not overbought
                 & (dataframe["adx"] > 20)  # Trending market
+                & (dataframe["volume"] > dataframe["volume_mean"])  # Volume confirms interest
                 & (dataframe["volume"] > 0)
                 & (dataframe["btc_safe_1h"] == 1.0)
             ),
             ["enter_long", "enter_tag"],
-        ] = (1, "trend_pullback")
+        ] = (1, "trend_follow")
 
         # --- SHORT Entry: Adaptive RSI + MFI peak + VWAP Premium ---
         dataframe.loc[
@@ -413,6 +413,20 @@ class CustomBestStrategy(IStrategy):
             ),
             ["enter_short", "enter_tag"],
         ] = (1, "rsi_mfi_vwap_peak")
+
+        # --- DEBUG: Log indicator values when no signal fires ---
+        # Only log for 1 pair per cycle to avoid spam
+        if dataframe["enter_long"].iloc[-1] == 0 and metadata["pair"] < "C":
+            c = dataframe.iloc[-1]
+            logger.debug(
+                f"📊 {metadata['pair']} no signal | "
+                f"RSI={c.get('rsi', 0):.1f} ADX={c.get('adx', 0):.1f} "
+                f"close={c['close']:.4f} ema20={c.get('ema_20', 0):.4f} "
+                f"ema50_1h={c.get('ema_50_1h', 0):.4f} vwap={c.get('vwap', 0):.4f} "
+                f"bb_mid={c.get('bb_middleband', 0):.4f} "
+                f"vol/avg={c['volume'] / c.get('volume_mean', 1):.2f} "
+                f"btc_safe={c.get('btc_safe_1h', -1)}"
+            )
 
         return dataframe
 
