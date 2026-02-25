@@ -284,6 +284,11 @@ class CustomBestStrategy(IStrategy):
         Signal 3 (Reversal): Volume spike capitulation near support — momentum-based
         Each signal has its own enter_tag so you can track which performs best.
         """
+        # Initialize columns to prevent NaN/float conversion errors
+        dataframe.loc[:, "enter_long"] = 0
+        dataframe.loc[:, "enter_short"] = 0
+        dataframe.loc[:, "enter_tag"] = ""
+
         is_spot = self.config.get("trading_mode", "spot") == "spot"
 
         # Hyperopt-optimizable parameters
@@ -415,19 +420,23 @@ class CustomBestStrategy(IStrategy):
             ["enter_short", "enter_tag"],
         ] = (1, "rsi_mfi_vwap_peak")
 
-        # --- DEBUG: Log indicator values when no signal fires ---
-        # Only log for 1 pair per cycle to avoid spam
-        if dataframe["enter_long"].iloc[-1] == 0 and metadata["pair"] < "C":
-            c = dataframe.iloc[-1]
-            logger.debug(
-                f"📊 {metadata['pair']} no signal | "
-                f"RSI={c.get('rsi', 0):.1f} ADX={c.get('adx', 0):.1f} "
-                f"close={c['close']:.4f} ema20={c.get('ema_20', 0):.4f} "
-                f"ema50_1h={c.get('ema_50_1h', 0):.4f} vwap={c.get('vwap', 0):.4f} "
-                f"bb_mid={c.get('bb_middleband', 0):.4f} "
-                f"vol/avg={c['volume'] / c.get('volume_mean', 1):.2f} "
-                f"btc_safe={c.get('btc_safe_1h', -1)}"
-            )
+        # --- SIGNAL DIAGNOSTIC ---
+        # Freqtrade evaluates iloc[-2] (last CLOSED candle) for entry signals,
+        # not iloc[-1] (currently forming candle). Log both to diagnose.
+        for label, idx in [("CLOSED[-2]", -2), ("LIVE[-1]", -1)]:
+            c = dataframe.iloc[idx]
+            fired = int(c.get("enter_long", 0))
+            tag = c.get("enter_tag", "") if fired else "none"
+            if fired == 0 and label == "CLOSED[-2]" and metadata["pair"] in ("ADA/USDT", "ETH/USDT", "BTC/USDT"):
+                logger.info(
+                    f"📊 {metadata['pair']} {label} enter={fired} tag={tag} | "
+                    f"RSI={c.get('rsi', 0):.1f} ADX={c.get('adx', 0):.1f} "
+                    f"ema20={c.get('ema_20', 0):.4f} close={c['close']:.4f} "
+                    f"ema50_1h={c.get('ema_50_1h', 0):.4f} bb_mid={c.get('bb_middleband', 0):.4f} "
+                    f"vwap={c.get('vwap', 0):.4f} btc_safe={c.get('btc_safe_1h', 'MISSING')}"
+                )
+            elif fired == 1:
+                logger.info(f"🎯 {metadata['pair']} {label} SIGNAL FIRED: {tag}")
 
         return dataframe
 
@@ -439,6 +448,11 @@ class CustomBestStrategy(IStrategy):
           (RSI drops below 50, or price crosses under EMA20)
         Freqtrade uses the FIRST matching exit condition, so we set the most specific ones first.
         """
+        # Initialize columns to prevent NaN/float conversion errors
+        dataframe.loc[:, "exit_long"] = 0
+        dataframe.loc[:, "exit_short"] = 0
+        dataframe.loc[:, "exit_tag"] = ""
+
         # --- EXIT LONG (Momentum trades): momentum fading ---
         # RSI drops below 50 = trend losing steam. EMA20 cross down = short-term trend broke.
         dataframe.loc[
