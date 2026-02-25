@@ -355,6 +355,31 @@ class CustomBestStrategy(IStrategy):
             ["enter_long", "enter_tag"],
         ] = (1, "volume_reversal")
 
+        # ============================================================
+        # SIGNAL 4 — MOMENTUM: Breakout buy in strong trend
+        # Catches coins that are ALREADY pumping. Instead of buying
+        # dips, we ride the wave. The Gemini AI guard is the key
+        # filter here — it prevents buying exhausted pumps.
+        # Conditions: price breaking above BB upper + strong volume
+        # + confirmed 1h uptrend + RSI in the sweet spot (not yet
+        # overbought/exhausted).
+        # ============================================================
+        dataframe.loc[
+            (
+                (dataframe["enter_long"] == 0)  # Don't override previous signals
+                & (dataframe["close"] > dataframe["bb_upperband"])  # Breaking out above BB
+                & (dataframe["close"] > dataframe["vwap"])  # Above VWAP (strength)
+                & (dataframe["ema_50_1h"] > dataframe["ema_200_1h"])  # 1h uptrend
+                & (dataframe["rsi"] > 50)  # Momentum present
+                & (dataframe["rsi"] < 70)  # But not exhausted yet
+                & (dataframe["volume_spike"] == 1)  # Volume confirms breakout
+                & (dataframe["adx"] > 25)  # Strong trend (not sideways chop)
+                & (dataframe["volume"] > 0)
+                & (dataframe["btc_safe_1h"] == 1.0)
+            ),
+            ["enter_long", "enter_tag"],
+        ] = (1, "momentum_breakout")
+
         # --- SHORT Entry: Adaptive RSI + MFI peak + VWAP Premium ---
         dataframe.loc[
             (
