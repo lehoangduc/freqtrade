@@ -730,7 +730,6 @@ class CustomBestStrategy(IStrategy):
             
             msg = f"🧠 Asking Gemini AI [{self.ai_daily_calls}/{self.ai_daily_budget} today] to analyze {side} on {pair} at {rate}..."  # noqa: E501
             logger.info(msg)
-            self.dp.send_msg(msg, always_send=True)
             current_rsi_1h = f"{latest.get('rsi_1h', 0):.1f}"
             current_ema50_1h = f"{latest.get('ema_50_1h', 0):.4f}"
             current_ema200_1h = f"{latest.get('ema_200_1h', 0):.4f}"
@@ -773,14 +772,12 @@ class CustomBestStrategy(IStrategy):
                 decision_str = "REJECTED" if not result.get("decision") else "LOW CONFIDENCE"
                 result_msg = f"❌ Gemini {decision_str} {side} on {pair} (Confidence: {confidence}%). {result.get('reasoning')}"  # noqa: E501
                 logger.info(result_msg)
-                self.dp.send_msg(result_msg, always_send=True)
                 self.ai_candle_cache[cache_key] = False
                 return False
 
         except Exception as e:
             msg = f"⚠️ Error calling Gemini API: {e}. Defaulting to YES to keep bot running."
             logger.error(msg)
-            self.dp.send_msg(msg)
             return True
 
     def confirm_trade_exit(
@@ -843,7 +840,6 @@ class CustomBestStrategy(IStrategy):
 
             msg = f"💎 Bot wants to take profit ({current_profit * 100:.2f}%) on {pair} at {rate}. Asking Gemini if we should hold the breakout..."  # noqa: E501
             logger.info(msg)
-            self.dp.send_msg(msg, always_send=True)
 
             response = self.llm_client.models.generate_content(
                 model="gemini-2.5-flash",
@@ -872,5 +868,4 @@ class CustomBestStrategy(IStrategy):
         except Exception as e:
             msg = f"⚠️ Error calling Gemini API on exit: {e}. Selling to be safe."
             logger.error(msg)
-            self.dp.send_msg(msg)
             return True
