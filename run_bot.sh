@@ -11,17 +11,17 @@ fi
 cd "$(dirname "$0")"
 
 # Activate environment if needed
-if [[ "$CONDA_DEFAULT_ENV" != "freqtrade" ]]; then
+if [[ -f ".venv/bin/activate" ]]; then
+    echo "Activating virtual environment..."
+    source .venv/bin/activate
+elif [[ "$CONDA_DEFAULT_ENV" != "freqtrade" ]]; then
     if command -v conda &> /dev/null; then
         echo "Activating conda environment 'freqtrade'..."
         # Setup conda for bash script execution
         eval "$(conda shell.bash hook)"
         conda activate freqtrade || { echo "Error: Conda 'freqtrade' env not found."; exit 1; }
-    elif [ -f ".venv/bin/activate" ]; then
-        echo "Activating virtual environment..."
-        source .venv/bin/activate
     else
-        echo "Error: Neither Conda nor .venv/bin/activate found."
+        echo "Error: Neither .venv/bin/activate nor Conda found."
         exit 1
     fi
 fi

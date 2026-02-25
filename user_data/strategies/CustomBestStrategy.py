@@ -367,7 +367,7 @@ class CustomBestStrategy(IStrategy):
                 & (dataframe["close"] > dataframe["ema_50_1h"])  # Price above 1h EMA50
                 & (dataframe["close"] > dataframe["bb_middleband"])  # Above BB mid (momentum)
                 & (dataframe["rsi"] > 55)  # Clear momentum
-                & (dataframe["rsi"] < 75)  # Not fully exhausted
+                & (dataframe["rsi"] < 80)  # Not fully exhausted (pump RSI is 70-80)
                 & (dataframe["volume"] > dataframe["volume_mean"])  # Above-average volume
                 & (dataframe["adx"] > 20)  # Trending (not sideways chop)
                 & (dataframe["volume"] > 0)
@@ -390,9 +390,8 @@ class CustomBestStrategy(IStrategy):
                 & (dataframe["close"] > dataframe["ema_20"])  # Price above 5m EMA20
                 & (dataframe["close"] > dataframe["ema_50_1h"])  # Above 1h macro support
                 & (dataframe["rsi"] > 40)  # Not oversold
-                & (dataframe["rsi"] < 70)  # Not overbought
+                & (dataframe["rsi"] < 75)  # Not overbought (pump RSI reaches 72+)
                 & (dataframe["adx"] > 20)  # Trending market
-                & (dataframe["volume"] > dataframe["volume_mean"])  # Volume confirms interest
                 & (dataframe["volume"] > 0)
                 & (dataframe["btc_safe_1h"] == 1.0)
             ),
