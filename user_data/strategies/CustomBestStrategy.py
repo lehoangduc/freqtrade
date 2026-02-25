@@ -368,7 +368,6 @@ class CustomBestStrategy(IStrategy):
                 & (dataframe["close"] > dataframe["bb_middleband"])  # Above BB mid (momentum)
                 & (dataframe["rsi"] > 55)  # Clear momentum
                 & (dataframe["rsi"] < 80)  # Not fully exhausted (pump RSI is 70-80)
-                & (dataframe["volume"] > dataframe["volume_mean"])  # Above-average volume
                 & (dataframe["adx"] > 20)  # Trending (not sideways chop)
                 & (dataframe["volume"] > 0)
                 & (dataframe["btc_safe_1h"] == 1.0)
