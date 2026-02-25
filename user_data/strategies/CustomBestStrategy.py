@@ -81,18 +81,18 @@ class CustomBestStrategy(IStrategy):
 
 
 
-    # Minimal ROI designed for the strategy
-    # Take profit dynamically
-    # Minimal ROI (Restored to sensible active trading default)
-    minimal_roi = {"0": 0.05, "30": 0.02, "60": 0.01, "120": 0.0}
+    # Minimal ROI — aligned with hyperopt-optimized values
+    # Let winners run initially (20.9%), then gradually accept smaller profits
+    minimal_roi = {"0": 0.209, "30": 0.061, "46": 0.015, "145": 0.0}
 
-    # Optimal stoploss (Tighter stoploss to prevent deep underwater trades)
-    stoploss = -0.05
+    # Stoploss — absolute floor (ATR-based custom_stoploss is the real guard)
+    # Hyperopt found -0.13 is optimal; -0.05 was too tight, hit by normal 5m noise
+    stoploss = -0.13
 
-    # Trailing stoploss setup
+    # Trailing stoploss — lock in profit at 1% once we're 2% up
     trailing_stop = True
-    trailing_stop_positive = 0.02
-    trailing_stop_positive_offset = 0.03
+    trailing_stop_positive = 0.01
+    trailing_stop_positive_offset = 0.02
     trailing_only_offset_is_reached = True
 
     # Enable ATR-based custom stoploss
@@ -193,6 +193,14 @@ class CustomBestStrategy(IStrategy):
 
         # 4. Volume Metric (Guard)
         dataframe["volume_mean"] = dataframe["volume"].rolling(window=30).mean()
+        # Volume spike: current bar volume is > 1.5x the 30-candle average
+        dataframe["volume_spike"] = (
+            dataframe["volume"] > (dataframe["volume_mean"] * 1.5)
+        ).astype(int)
+
+        # 4b. Short-term EMAs for 5m trend detection
+        dataframe["ema_20"] = ta.EMA(dataframe, timeperiod=20)
+        dataframe["ema_50_5m"] = ta.EMA(dataframe, timeperiod=50)
 
         # 5. ATR (Average True Range) - Measures volatility for custom_stoploss
         dataframe["atr"] = ta.ATR(dataframe, timeperiod=14)
@@ -267,12 +275,15 @@ class CustomBestStrategy(IStrategy):
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Populate entry conditions for LONG and SHORT trades.
+        Multi-signal entry system with tagged entries for performance tracking.
+        Signal 1 (Sniper): Original deep dip-buy — rare but highest conviction
+        Signal 2 (Scout):  BB bounce in confirmed 1h uptrend — more frequent
+        Signal 3 (Reversal): Volume spike capitulation near support — momentum-based
+        Each signal has its own enter_tag so you can track which performs best.
         """
         is_spot = self.config.get("trading_mode", "spot") == "spot"
 
-        # Spot needs to be more aggressive than futures to keep active
-        # Use parameters that Hyperopt can optimize
+        # Hyperopt-optimizable parameters
         long_rsi_limit = self.buy_rsi.value
         long_mfi_limit = self.buy_mfi.value
         long_rsi_1h_limit = 40 if is_spot else 45
@@ -281,55 +292,80 @@ class CustomBestStrategy(IStrategy):
         short_mfi_limit = self.sell_mfi.value
 
         # --- Volatility Adaptive RSI ---
-        # Calculate ATR % of price to measure current market volatility
         dataframe["atr_pct"] = (dataframe["atr"] / dataframe["close"]) * 100
-
-        # If ATR% is high (>1.0), market is very volatile (deep dumps possible).
-        # We lower the buy threshold by 5 to wait for deeper dips.
         dataframe["dynamic_buy_rsi"] = long_rsi_limit
         dataframe.loc[dataframe["atr_pct"] > 1.0, "dynamic_buy_rsi"] = long_rsi_limit - 5
-
-        # Similarly, increase the sell threshold for shorts
         dataframe["dynamic_sell_rsi"] = short_rsi_limit
         dataframe.loc[dataframe["atr_pct"] > 1.0, "dynamic_sell_rsi"] = short_rsi_limit + 5
 
-        # --- LONG Entry: Adaptive RSI + MFI dip + VWAP Discount ---
+        # ============================================================
+        # SIGNAL 1 — SNIPER: Deep dip buy (original strict signal)
+        # 8 conditions must align — rare but high confidence.
+        # ============================================================
         dataframe.loc[
             (
                 (dataframe["rsi"] < dataframe["dynamic_buy_rsi"])
-                & (
-                    dataframe["mfi"] < long_mfi_limit
-                )  # Guard: Money is extremely oversold  # noqa: E501
+                & (dataframe["mfi"] < long_mfi_limit)
                 & (dataframe["tema"] <= dataframe["bb_middleband"])
-                & (
-                    dataframe["close"] < dataframe["vwap"]
-                )  # Guard: Price is cheap relative to daily VWAP  # noqa: E501
+                & (dataframe["close"] < dataframe["vwap"])
                 & (dataframe["volume"] > 0)
-                & (
-                    dataframe["rsi_1h"] > long_rsi_1h_limit
-                )  # Guard: 1h RSI not overbought (avoid buying tops)  # noqa: E501
-                & (dataframe["adx"] > 15)  # Guard: Some trend strength present  # noqa: E501
-                & (dataframe["cmf"] < -0.1)  # Guard: CMF shows oversold pressure  # noqa: E501
-                & (
-                    dataframe["btc_safe_1h"] == 1.0
-                )  # PHASE 3: BTC Filter - Block entry if BTC is dumping  # noqa: E501
+                & (dataframe["rsi_1h"] > long_rsi_1h_limit)
+                & (dataframe["adx"] > 15)
+                & (dataframe["cmf"] < -0.1)
+                & (dataframe["btc_safe_1h"] == 1.0)
             ),
             ["enter_long", "enter_tag"],
-        ] = (1, "rsi_mfi_vwap_dip")
+        ] = (1, "sniper_dip")
+
+        # ============================================================
+        # SIGNAL 2 — SCOUT: Bollinger Band bounce in confirmed uptrend
+        # Catches healthy pullbacks in coins trending up on 1h.
+        # Less strict than sniper — the 1h uptrend IS the conviction.
+        # ============================================================
+        dataframe.loc[
+            (
+                (dataframe["enter_long"] == 0)  # Don't override sniper
+                & (dataframe["close"] <= dataframe["bb_lowerband"] * 1.01)  # At/near lower BB
+                & (dataframe["ema_50_1h"] > dataframe["ema_200_1h"])  # 1h uptrend confirmed
+                & (dataframe["rsi"] < 40)  # Moderately oversold (not extreme required)
+                & (dataframe["volume_spike"] == 1)  # Volume confirms the move
+                & (dataframe["volume"] > 0)
+                & (dataframe["btc_safe_1h"] == 1.0)
+            ),
+            ["enter_long", "enter_tag"],
+        ] = (1, "bb_bounce_uptrend")
+
+        # ============================================================
+        # SIGNAL 3 — REVERSAL: Volume spike capitulation near support
+        # Sharp selloffs with huge volume often snap back.
+        # Requires 1h uptrend to avoid catching true crashes.
+        # ============================================================
+        dataframe.loc[
+            (
+                (dataframe["enter_long"] == 0)  # Don't override previous signals
+                & (dataframe["rsi"] < 35)  # Oversold
+                & (dataframe["volume_spike"] == 1)  # Big volume = capitulation
+                & (dataframe["close"] < dataframe["bb_middleband"])  # Below BB mid
+                & (dataframe["close"] > dataframe["bb_lowerband"])  # Not in freefall
+                & (dataframe["ema_50_1h"] > dataframe["ema_200_1h"])  # 1h uptrend
+                & (dataframe["mfi"] < 40)  # Money flowing out (capitulation)
+                & (dataframe["volume"] > 0)
+                & (dataframe["btc_safe_1h"] == 1.0)
+            ),
+            ["enter_long", "enter_tag"],
+        ] = (1, "volume_reversal")
 
         # --- SHORT Entry: Adaptive RSI + MFI peak + VWAP Premium ---
         dataframe.loc[
             (
                 (dataframe["rsi"] > dataframe["dynamic_sell_rsi"])
-                & (dataframe["mfi"] > short_mfi_limit)  # Guard: Money is extremely overbought
+                & (dataframe["mfi"] > short_mfi_limit)
                 & (dataframe["tema"] >= dataframe["bb_middleband"])
-                & (
-                    dataframe["close"] > dataframe["vwap"]
-                )  # Guard: Price is expensive relative to daily VWAP
+                & (dataframe["close"] > dataframe["vwap"])
                 & (dataframe["volume"] > 0)
-                & (dataframe["rsi_1h"] < 60)  # Guard: 1h RSI not oversold (avoid shorting bottoms)
-                & (dataframe["adx"] > 15)  # Guard: Some trend strength present
-                & (dataframe["cmf"] > 0.1)  # Guard: CMF shows overbought pressure
+                & (dataframe["rsi_1h"] < 60)
+                & (dataframe["adx"] > 15)
+                & (dataframe["cmf"] > 0.1)
             ),
             ["enter_short", "enter_tag"],
         ] = (1, "rsi_mfi_vwap_peak")
@@ -381,7 +417,7 @@ class CustomBestStrategy(IStrategy):
         last_candle = dataframe.iloc[-1].squeeze()
 
         # How many minutes has this trade been open?
-        trade_duration = (current_time - trade.open_date_utc).seconds / 60
+        trade_duration = (current_time - trade.open_date_utc).total_seconds() / 60
 
         # PHASE 3: TIME-BASED EXITS (Capital Free-up)
         # If the trade has been stuck and flat for 24 hours (1440 minutes)...
@@ -482,6 +518,16 @@ class CustomBestStrategy(IStrategy):
         expected_entries, profit_threshold, stake_multiplier = dca_config[count_of_entries - 1]
 
         if current_profit < profit_threshold:
+            # Guard: only allow deeper DCA (level 2+) if 1h trend is still up.
+            # Prevents throwing good money after bad in a genuine crash.
+            is_uptrend_1h = last_candle.get("ema_50_1h", 0) > last_candle.get("ema_200_1h", 0)
+            if count_of_entries >= 2 and not is_uptrend_1h:
+                logger.info(
+                    f"Skipping DCA level {count_of_entries} for {trade.pair}: "
+                    f"1h downtrend (EMA50 < EMA200)"
+                )
+                return None
+
             # Check momentum so we don't catch a falling knife right at the dump peak
             # Wait for RSI or MFI to be reasonably oversold to ensure a bounce
             if last_candle["rsi"] < 35 or last_candle["mfi"] < 35:
