@@ -104,6 +104,9 @@ class CustomBestStrategy(IStrategy):
     # Process indicators only for new candles to save compute
     process_only_new_candles = True
 
+    # Startup candle count — needs 288 for VWAP (24h rolling window at 5m)
+    startup_candle_count: int = 288
+
     @property
     def protections(self):
         """
@@ -430,15 +433,34 @@ class CustomBestStrategy(IStrategy):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Populate exit conditions for LONG and SHORT trades.
+        Signal-aware exit conditions:
+        - Dip-buy signals (sniper_dip, bb_bounce, volume_reversal): exit on RSI overbought / BB upper
+        - Momentum signals (momentum_breakout, trend_follow): exit when momentum FADES
+          (RSI drops below 50, or price crosses under EMA20)
+        Freqtrade uses the FIRST matching exit condition, so we set the most specific ones first.
         """
-        # --- EXIT LONG: RSI overbought or price above upper Bollinger Band ---
+        # --- EXIT LONG (Momentum trades): momentum fading ---
+        # RSI drops below 50 = trend losing steam. EMA20 cross down = short-term trend broke.
         dataframe.loc[
             (
-                (
+                (qtpylib.crossed_below(dataframe["rsi"], 50))  # Momentum fading
+                | (
+                    (dataframe["close"] < dataframe["ema_20"])  # Price crossed under EMA20
+                    & (dataframe["rsi"] < 55)  # Confirm: not just a wick
+                )
+            ),
+            ["exit_long", "exit_tag"],
+        ] = (1, "momentum_fade")
+
+        # --- EXIT LONG (Dip-buy trades): RSI overbought or price above upper BB ---
+        # Only fires if momentum_fade didn't already fire (prevents double-tagging)
+        dataframe.loc[
+            (
+                (dataframe["exit_long"] == 0)  # Don't override momentum_fade
+                & (
                     qtpylib.crossed_above(dataframe["rsi"], self.sell_rsi.value)
-                )  # Signal: RSI overbought
-                | (dataframe["tema"] > dataframe["bb_upperband"])  # Signal: Price above upper BB
+                    | (dataframe["tema"] > dataframe["bb_upperband"])
+                )
             ),
             ["exit_long", "exit_tag"],
         ] = (1, "take_profit_signal")
@@ -446,10 +468,8 @@ class CustomBestStrategy(IStrategy):
         # --- EXIT SHORT: RSI oversold or price below lower Bollinger Band ---
         dataframe.loc[
             (
-                (
-                    qtpylib.crossed_below(dataframe["rsi"], self.buy_rsi.value)
-                )  # Signal: RSI oversold (short covering)
-                | (dataframe["tema"] < dataframe["bb_lowerband"])  # Signal: Price below lower BB
+                qtpylib.crossed_below(dataframe["rsi"], self.buy_rsi.value)
+                | (dataframe["tema"] < dataframe["bb_lowerband"])
             ),
             ["exit_short", "exit_tag"],
         ] = (1, "cover_short_signal")
@@ -574,6 +594,17 @@ class CustomBestStrategy(IStrategy):
         expected_entries, profit_threshold, stake_multiplier = dca_config[count_of_entries - 1]
 
         if current_profit < profit_threshold:
+            # Guard: Block DCA entirely for momentum/trend entries.
+            # If a momentum trade reverses, it means the trend broke — adding money
+            # to a failed momentum trade compounds losses. Cut, don't average down.
+            momentum_tags = {"momentum_breakout", "trend_follow"}
+            if trade.enter_tag in momentum_tags:
+                logger.info(
+                    f"Skipping DCA for {trade.pair}: momentum entry ({trade.enter_tag}) "
+                    f"does not support averaging down."
+                )
+                return None
+
             # Guard: only allow deeper DCA (level 2+) if 1h trend is still up.
             # Prevents throwing good money after bad in a genuine crash.
             is_uptrend_1h = last_candle.get("ema_50_1h", 0) > last_candle.get("ema_200_1h", 0)
