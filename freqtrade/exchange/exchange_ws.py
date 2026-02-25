@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 import time
 from copy import deepcopy
 from functools import partial
@@ -208,12 +209,15 @@ class ExchangeWS:
                     raise  # Let the outer handler deal with this cleanly
                 except ccxt.NetworkError as e:
                     # Transient connection error (e.g. close code 1006 from remote server).
-                    # Log and retry after a short delay instead of killing the watcher.
-                    logger.warning(
-                        f"Network error in continuously_async_watch_ohlcv for {pair}, "
-                        f"{timeframe} - will retry in {_retry_delay}s: {e}"
+                    # Downgraded to INFO: this is expected/handled, not a true warning.
+                    # Jitter spreads reconnects so all pairs don't pile on simultaneously
+                    # after a shared-connection drop (which would trigger more drops).
+                    jitter = random.uniform(0, 3)
+                    logger.info(
+                        f"WS network error for {pair}, {timeframe} - "
+                        f"retrying in {_retry_delay + jitter:.1f}s: {e}"
                     )
-                    await asyncio.sleep(_retry_delay)
+                    await asyncio.sleep(_retry_delay + jitter)
                     _retry_delay = min(_retry_delay * 2, _retry_delay_max)
                 except ccxt.BaseError:
                     logger.exception(
