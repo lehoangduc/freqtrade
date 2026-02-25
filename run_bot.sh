@@ -10,20 +10,29 @@ fi
 # Move to the script's directory (the project root)
 cd "$(dirname "$0")"
 
-# Activate environment if needed
-if [[ -f ".venv/bin/activate" ]]; then
-    echo "Activating virtual environment..."
-    source .venv/bin/activate
-elif [[ "$CONDA_DEFAULT_ENV" != "freqtrade" ]]; then
-    if command -v conda &> /dev/null; then
-        echo "Activating conda environment 'freqtrade'..."
-        # Setup conda for bash script execution
-        eval "$(conda shell.bash hook)"
-        conda activate freqtrade || { echo "Error: Conda 'freqtrade' env not found."; exit 1; }
+# --- Parse --conda flag (can appear anywhere in args) ---
+USE_CONDA=false
+FILTERED_ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == "--conda" ]]; then
+        USE_CONDA=true
     else
-        echo "Error: Neither .venv/bin/activate nor Conda found."
-        exit 1
+        FILTERED_ARGS+=("$arg")
     fi
+done
+set -- "${FILTERED_ARGS[@]}"
+
+# --- Activate environment ---
+if [[ "$USE_CONDA" == true ]]; then
+    echo "Activating conda environment 'freqtrade'..."
+    eval "$(conda shell.bash hook)"
+    conda activate freqtrade || { echo "Error: Conda 'freqtrade' env not found."; exit 1; }
+elif [[ -f ".venv/bin/activate" ]]; then
+    echo "Activating virtual environment (.venv)..."
+    source .venv/bin/activate
+else
+    echo "Error: No .venv found. Pass --conda to use the conda 'freqtrade' env."
+    exit 1
 fi
 
 start_disk_monitor() {
