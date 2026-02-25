@@ -10,7 +10,7 @@ from freqtrade.strategy import (
     stoploss_from_absolute,
 )
 from freqtrade.persistence import Trade, Order
-from datetime import datetime
+from datetime import datetime, timezone
 import talib.abstract as ta
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 import os
