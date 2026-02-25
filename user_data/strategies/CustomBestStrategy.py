@@ -356,29 +356,48 @@ class CustomBestStrategy(IStrategy):
         ] = (1, "volume_reversal")
 
         # ============================================================
-        # SIGNAL 4 — MOMENTUM: Breakout buy in strong trend
-        # Catches coins that are ALREADY pumping. Instead of buying
-        # dips, we ride the wave. The Gemini AI guard is the key
-        # filter here — it prevents buying exhausted pumps.
-        # Conditions: price breaking above BB upper + strong volume
-        # + confirmed 1h uptrend + RSI in the sweet spot (not yet
-        # overbought/exhausted).
+        # SIGNAL 4 — MOMENTUM: Breakout in confirmed uptrend
+        # Catches coins already pumping. Uses close > ema_50_1h
+        # (faster than golden cross which takes weeks to form).
+        # Gemini AI is the key filter to avoid exhausted pumps.
         # ============================================================
         dataframe.loc[
             (
                 (dataframe["enter_long"] == 0)  # Don't override previous signals
                 & (dataframe["close"] > dataframe["bb_upperband"])  # Breaking out above BB
                 & (dataframe["close"] > dataframe["vwap"])  # Above VWAP (strength)
-                & (dataframe["ema_50_1h"] > dataframe["ema_200_1h"])  # 1h uptrend
+                & (dataframe["close"] > dataframe["ema_50_1h"])  # Price above 1h EMA50
                 & (dataframe["rsi"] > 50)  # Momentum present
                 & (dataframe["rsi"] < 70)  # But not exhausted yet
-                & (dataframe["volume_spike"] == 1)  # Volume confirms breakout
+                & (dataframe["volume"] > dataframe["volume_mean"])  # Above-average volume
                 & (dataframe["adx"] > 25)  # Strong trend (not sideways chop)
                 & (dataframe["volume"] > 0)
                 & (dataframe["btc_safe_1h"] == 1.0)
             ),
             ["enter_long", "enter_tag"],
         ] = (1, "momentum_breakout")
+
+        # ============================================================
+        # SIGNAL 5 — PULLBACK: Buy the dip within a 5m uptrend
+        # The most frequent signal. Catches micro-pullbacks to the
+        # 20-EMA support line when short-term trend is up.
+        # Relies heavily on Gemini AI to filter out false pullbacks.
+        # ============================================================
+        dataframe.loc[
+            (
+                (dataframe["enter_long"] == 0)  # Don't override previous signals
+                & (dataframe["ema_20"] > dataframe["ema_50_5m"])  # 5m uptrend (EMA20 > EMA50)
+                & (dataframe["close"] > dataframe["ema_50_5m"])  # Price above 5m EMA50
+                & (dataframe["close"] <= dataframe["ema_20"] * 1.005)  # Pulled back near EMA20
+                & (dataframe["close"] > dataframe["ema_50_1h"])  # Above 1h EMA50 support
+                & (dataframe["rsi"] > 40)  # Not oversold (we want trending)
+                & (dataframe["rsi"] < 60)  # Not overbought (room to run)
+                & (dataframe["adx"] > 20)  # Trending market
+                & (dataframe["volume"] > 0)
+                & (dataframe["btc_safe_1h"] == 1.0)
+            ),
+            ["enter_long", "enter_tag"],
+        ] = (1, "trend_pullback")
 
         # --- SHORT Entry: Adaptive RSI + MFI peak + VWAP Premium ---
         dataframe.loc[
