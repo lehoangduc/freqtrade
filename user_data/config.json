@@ -45,6 +45,8 @@
         "key": "1136b688-4f4d-40d7-b5d0-9cc08dc8de17",
         "secret": "00EEBB978DD0BB622AAF1E3EB246F981",
         "password": "fjC,8t9y'WN6Q'|.@",
+        "ws_connection_limit": 25,
+        "ws_subscription_delay": 1.0,
         "ccxt_config": {
             "timeout": 30000,
             "enableRateLimit": true

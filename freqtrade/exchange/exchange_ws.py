@@ -33,6 +33,14 @@ class ExchangeWS:
         self._thread.start()
         self.__cleanup_called = False
 
+        # Max number of simultaneous WS subscriptions (to avoid exchange-side drops).
+        # Configurable via config["exchange"]["ws_connection_limit"] (default: 40)
+        exch_cfg = config.get("exchange", {})
+        self._ws_connection_limit: int = int(exch_cfg.get("ws_connection_limit", 40))
+        # Delay (seconds) between starting each new subscription to avoid burst-connecting.
+        # Configurable via config["exchange"]["ws_subscription_delay"] (default: 0.5)
+        self._ws_subscription_delay: float = float(exch_cfg.get("ws_subscription_delay", 0.5))
+
     def _start_forever(self) -> None:
         self._loop = asyncio.new_event_loop()
         try:
@@ -124,6 +132,14 @@ class ExchangeWS:
         for p in self._klines_watching:
             # Check if they're already scheduled
             if p not in self._klines_scheduled:
+                # Respect the max concurrent subscription limit to avoid overwhelming the exchange
+                if len(self._klines_scheduled) >= self._ws_connection_limit:
+                    logger.info(
+                        f"WS subscription limit ({self._ws_connection_limit}) reached. "
+                        f"Skipping {p} until a slot opens up."
+                    )
+                    continue
+
                 self._klines_scheduled.add(p)
                 pair, timeframe, candle_type = p
                 task = asyncio.create_task(
@@ -138,6 +154,9 @@ class ExchangeWS:
                         candle_type=candle_type,
                     )
                 )
+                # Stagger subscriptions to avoid burst-connecting to the exchange
+                if self._ws_subscription_delay > 0:
+                    await asyncio.sleep(self._ws_subscription_delay)
 
     async def _unwatch_ohlcv(self, pair: str, timeframe: str, candle_type: CandleType) -> None:
         try:
