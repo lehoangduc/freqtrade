@@ -69,9 +69,10 @@ class CustomBestStrategy(IStrategy):
             # Cache: {(pair, candle_timestamp) -> bool} - ONE API call per candle per pair
             self.ai_candle_cache: dict = {}
             # Daily budget: track calls to cap max spend
-            self.ai_daily_calls = 0
-            self.ai_budget_date = None
             self.ai_daily_budget = 100  # Max 100 AI calls per day (~$0.002 total)
+            self.usage_file = "user_data/gemini_usage.json"
+            self._load_gemini_usage()
+            
             logger.info(
                 f"📱 Google LLM (Gemini) enabled. Daily budget: {self.ai_daily_budget} calls."
             )
@@ -106,6 +107,30 @@ class CustomBestStrategy(IStrategy):
 
     # Startup candle count — needs 288 for VWAP (24h rolling window at 5m)
     startup_candle_count: int = 288
+
+    def _load_gemini_usage(self):
+        """Load Gemini API usage from disk to persist across restarts."""
+        self.ai_daily_calls = 0
+        self.ai_budget_date = str(datetime.now(timezone.utc).date())
+        try:
+            if os.path.exists(self.usage_file):
+                with open(self.usage_file, 'r') as f:
+                    data = json.load(f)
+                    if data.get('date') == self.ai_budget_date:
+                        self.ai_daily_calls = data.get('calls', 0)
+        except Exception as e:
+            logger.warning(f"⚠️ Could not load Gemini usage: {e}")
+
+    def _save_gemini_usage(self):
+        """Save Gemini API usage to disk."""
+        try:
+            with open(self.usage_file, 'w') as f:
+                json.dump({
+                    'date': self.ai_budget_date,
+                    'calls': self.ai_daily_calls
+                }, f)
+        except Exception as e:
+            logger.error(f"⚠️ Could not save Gemini usage: {e}")
 
     @property
     def protections(self):
@@ -675,14 +700,19 @@ class CustomBestStrategy(IStrategy):
             latest = last_candles.iloc[-1]
 
             # --- DAILY BUDGET CHECK ---
-            today = current_time.date()
-            if self.ai_budget_date != today:
+            today_str = str(current_time.date())
+            if self.ai_budget_date != today_str:
                 self.ai_daily_calls = 0
-                self.ai_budget_date = today
+                self.ai_budget_date = today_str
+                self._save_gemini_usage()
+
             if self.ai_daily_calls >= self.ai_daily_budget:
                 msg = f"💸 Daily AI budget ({self.ai_daily_budget} calls) reached. Approving remaining trades without AI."  # noqa: E501
-                logger.warning(msg)
-                self.dp.send_msg(msg)
+                if self.ai_daily_calls == self.ai_daily_budget: # Only warn once
+                    logger.warning(msg)
+                    self.dp.send_msg(msg, always_send=True)
+                    self.ai_daily_calls += 1 # bump so we don't spam the warning
+                    self._save_gemini_usage()
                 return True
 
             # --- CANDLE CACHE CHECK ---
@@ -696,6 +726,8 @@ class CustomBestStrategy(IStrategy):
                 return cached
 
             self.ai_daily_calls += 1
+            self._save_gemini_usage()
+            
             msg = f"🧠 Asking Gemini AI [{self.ai_daily_calls}/{self.ai_daily_budget} today] to analyze {side} on {pair} at {rate}..."  # noqa: E501
             logger.info(msg)
             self.dp.send_msg(msg, always_send=True)
@@ -811,7 +843,7 @@ class CustomBestStrategy(IStrategy):
 
             msg = f"💎 Bot wants to take profit ({current_profit * 100:.2f}%) on {pair} at {rate}. Asking Gemini if we should hold the breakout..."  # noqa: E501
             logger.info(msg)
-            self.dp.send_msg(msg)
+            self.dp.send_msg(msg, always_send=True)
 
             response = self.llm_client.models.generate_content(
                 model="gemini-2.5-flash",
