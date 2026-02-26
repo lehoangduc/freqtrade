@@ -478,31 +478,14 @@ class CustomBestStrategy(IStrategy):
         dataframe.loc[:, "exit_short"] = 0
         dataframe.loc[:, "exit_tag"] = ""
 
-        # --- EXIT LONG (Momentum trades): momentum fading ---
-        # RSI drops below 50 = trend losing steam. EMA20 cross down = short-term trend broke.
+        # --- EXIT LONG (Emergency Fallback): ---
+        # Only extreme conditions here. Real exits handled in custom_exit.
         dataframe.loc[
             (
-                (qtpylib.crossed_below(dataframe["rsi"], 50))  # Momentum fading
-                | (
-                    (dataframe["close"] < dataframe["ema_20"])  # Price crossed under EMA20
-                    & (dataframe["rsi"] < 55)  # Confirm: not just a wick
-                )
+                (qtpylib.crossed_above(dataframe["rsi"], self.sell_rsi.value + 10)) # Extreme overbought
             ),
             ["exit_long", "exit_tag"],
-        ] = (1, "momentum_fade")
-
-        # --- EXIT LONG (Dip-buy trades): RSI overbought or price above upper BB ---
-        # Only fires if momentum_fade didn't already fire (prevents double-tagging)
-        dataframe.loc[
-            (
-                (dataframe["exit_long"] == 0)  # Don't override momentum_fade
-                & (
-                    qtpylib.crossed_above(dataframe["rsi"], self.sell_rsi.value)
-                    | (dataframe["tema"] > dataframe["bb_upperband"])
-                )
-            ),
-            ["exit_long", "exit_tag"],
-        ] = (1, "take_profit_signal")
+        ] = (1, "extreme_overbought_fallback")
 
         # --- EXIT SHORT: RSI oversold or price below lower Bollinger Band ---
         dataframe.loc[
@@ -534,7 +517,28 @@ class CustomBestStrategy(IStrategy):
         # How many minutes has this trade been open?
         trade_duration = (current_time - trade.open_date_utc).total_seconds() / 60
 
-        # PHASE 3: TIME-BASED EXITS (Capital Free-up)
+        # --- Tag-Specific Exit Logic ---
+        momentum_tags = ["momentum_breakout", "trend_follow"]
+        dip_buy_tags = ["sniper_dip", "bb_bounce", "volume_reversal"]
+
+        if trade.enter_tag in momentum_tags:
+            # EXIT LONG (Momentum trades): momentum fading
+            # RSI drops below 50 = trend losing steam. EMA20 cross down = short-term trend broke.
+            if last_candle["rsi"] < 50:
+                return "momentum_fade_rsi_drop"
+            # We can't use qtpylib.crossed_below easily in custom_exit without historical candle lookback,
+            # so we just check if it's currently below the thresholds
+            if current_rate < last_candle["ema_20"] and last_candle["rsi"] < 55:
+                return "momentum_fade_ema20_drop"
+
+        elif trade.enter_tag in dip_buy_tags:
+            # EXIT LONG (Dip-buy trades): RSI overbought or price above upper BB
+            if last_candle["rsi"] >= self.sell_rsi.value:
+                return "take_profit_overbought"
+            if current_rate > last_candle["bb_upperband"]:
+                return "take_profit_bb_upper"
+
+        # --- TIME-BASED EXITS (Capital Free-up) ---
         # If the trade has been stuck and flat for 24 hours (1440 minutes)...
         if trade_duration > 1440:
             # If we are slightly profitable or breakeven, exit immediately to free up money
