@@ -134,6 +134,36 @@ class CustomBestStrategy(IStrategy):
         except Exception as e:
             logger.error(f"⚠️ Could not save Gemini usage: {e}")
 
+    def _load_signal_performance(self):
+        """Load signal performance tracking from disk."""
+        try:
+            if os.path.exists(self.signal_performance_file):
+                with open(self.signal_performance_file, 'r') as f:
+                    self.signal_performance = json.load(f)
+        except Exception as e:
+            logger.warning(f"⚠️ Could not load signal performance: {e}")
+
+    def _save_signal_performance(self):
+        """Save signal performance tracking to disk."""
+        try:
+            with open(self.signal_performance_file, 'w') as f:
+                json.dump(self.signal_performance, f, indent=2)
+        except Exception as e:
+            logger.error(f"⚠️ Could not save signal performance: {e}")
+
+    def record_trade_result(self, enter_tag: str, profit_ratio: float):
+        """Record trade result by signal tag for self-improvement."""
+        if enter_tag not in self.signal_performance:
+            self.signal_performance[enter_tag] = {"wins": 0, "losses": 0, "total_profit": 0.0}
+        
+        self.signal_performance[enter_tag]["total_profit"] += profit_ratio
+        if profit_ratio > 0:
+            self.signal_performance[enter_tag]["wins"] += 1
+        else:
+            self.signal_performance[enter_tag]["losses"] += 1
+        
+        self._save_signal_performance()
+
     @property
     def protections(self):
         """
@@ -235,6 +265,9 @@ class CustomBestStrategy(IStrategy):
                 logger.info(msg)
                 self.dp.send_msg(msg, always_send=True)
                 self.last_global_lock_msg = ""
+                self.signal_performance = {}  # Track win/loss by signal tag
+                self.signal_performance_file = "user_data/signal_performance.json"
+                self._load_signal_performance()
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
@@ -440,32 +473,16 @@ class CustomBestStrategy(IStrategy):
                 & (dataframe["rsi"] < 80)  # Not fully exhausted (pump RSI is 70-80)
                 & (dataframe["adx"] > 20)  # Trending (not sideways chop)
                 & (dataframe["volume"] > 0)
+                & (dataframe["rsi_1h"] > 45)  # 1h trend strength
                 & (dataframe["btc_safe_1h"] == 1.0)
             ),
             ["enter_long", "enter_tag"],
         ] = (1, "momentum_breakout")
 
         # ============================================================
-        # SIGNAL 5 — TREND FOLLOW: Simple trend entry
-        # The broadest signal. Fires when a coin is in a confirmed
-        # 5m uptrend above macro support. Gemini AI is the PRIMARY
-        # quality gate here — it decides if THIS candle is a good
-        # entry point within the trend.
+        # SIGNAL 5 — TREND FOLLOW: REMOVED - 4/4 losses
+        # Original trend entry was too permissive. Removed to prevent losses.
         # ============================================================
-        dataframe.loc[
-            (
-                (dataframe["enter_long"] == 0)  # Don't override previous signals
-                & (dataframe["ema_20"] > dataframe["ema_50_5m"])  # 5m uptrend confirmed
-                & (dataframe["close"] > dataframe["ema_20"])  # Price above 5m EMA20
-                & (dataframe["close"] > dataframe["ema_50_1h"])  # Above 1h macro support
-                & (dataframe["rsi"] > 40)  # Not oversold
-                & (dataframe["rsi"] < 75)  # Not overbought (pump RSI reaches 72+)
-                & (dataframe["adx"] > 20)  # Trending market
-                & (dataframe["volume"] > 0)
-                & (dataframe["btc_safe_1h"] == 1.0)
-            ),
-            ["enter_long", "enter_tag"],
-        ] = (1, "trend_follow")
 
         # ============================================================
         # SIGNAL 6 — SIMPLE ENTRY: Market entry with fewer conditions
@@ -475,11 +492,11 @@ class CustomBestStrategy(IStrategy):
         dataframe.loc[
             (
                 (dataframe["enter_long"] == 0)  # Only if no other signal fired
-                & (dataframe["rsi"] < 50)  # Not overbought (lowered from 55)
+                & (dataframe["rsi"] < 48)  # Not overbought (stricter from 50)
                 & (dataframe["close"] > dataframe["ema_20"])  # Above short-term trend
                 & (dataframe["close"] > dataframe["ema_50_1h"])  # Above 1h trend
-                & (dataframe["rsi_1h"] > 45)  # 1h trend strength (higher from 40)
-                & (dataframe["volume"] > 0)
+                & (dataframe["rsi_1h"] > 45)  # 1h trend strength
+                & (dataframe["volume"] > dataframe["volume_mean"] * 1.2)  # Volume filter
                 & (dataframe["btc_safe_1h"] == 1.0)
             ),
             ["enter_long", "enter_tag"],
@@ -539,9 +556,9 @@ class CustomBestStrategy(IStrategy):
             ["exit_long", "exit_tag"],
         ] = (1, "rsi_momentum_fade")
 
-        # --- EXIT LONG: Price crosses under EMA20 ---
+        # --- EXIT LONG: Price crosses under EMA20 - Only trigger when price < EMA20 - 0.5% (avoid minor dips)
         dataframe.loc[
-            (qtpylib.crossed_below(dataframe["close"], dataframe["ema_20"])),
+            (dataframe["close"] < dataframe["ema_20"] * 0.995),
             ["exit_long", "exit_tag"],
         ] = (1, "price_ema20_cross_below")
 
@@ -603,20 +620,24 @@ class CustomBestStrategy(IStrategy):
         if last_candle["rsi"] > 70 and current_profit > 0.008:
             return "take_profit_rsi_overbought"
 
-        # Exit if price is above BB upper band with >0.5% profit
-        if current_rate > last_candle["bb_upperband"] and current_profit > 0.005:
+        # Exit if price is above BB upper band with >0.3% profit
+        if current_rate > last_candle["bb_upperband"] and current_profit > 0.003:
             return "take_profit_bb_upper"
+        
+        # Take-profit for momentum_breakout trades at realistic 0.3% target
+        if trade.enter_tag == "momentum_breakout" and current_profit > 0.003:
+            return "momentum_take_profit_03"
 
         # --- Tag-Specific Exit Logic ---
-        momentum_tags = ["momentum_breakout", "trend_follow", "simple_entry"]
+        momentum_tags = ["momentum_breakout", "simple_entry"]
         dip_buy_tags = ["sniper_dip", "bb_bounce", "volume_reversal"]
 
         if trade.enter_tag in momentum_tags:
             # EXIT LONG (Momentum trades): momentum fading only on larger losses
-            # RSI < 45 OR (rate < ema20 AND rsi < 45) to avoid catching minor pullbacks
-            if last_candle["rsi"] < 45 and current_profit < -0.005:
+            # RSI < 40 required for momentum_fade_rsi_drop, RSI < 45 for ema20 drop
+            if last_candle["rsi"] < 40 and current_profit < -0.003:
                 return "momentum_fade_rsi_drop"
-            if current_rate < last_candle["ema_20"] and last_candle["rsi"] < 45 and current_profit < -0.005:
+            if current_rate < last_candle["ema_20"] * 0.995 and last_candle["rsi"] < 45 and current_profit < -0.003:
                 return "momentum_fade_ema20_drop"
 
         elif trade.enter_tag in dip_buy_tags:
@@ -897,6 +918,11 @@ class CustomBestStrategy(IStrategy):
         Use Google Gemini LLM to verify if a winning trade is experiencing a massive breakout.
         If it is, AI will reject the normal ROI exit so we can "let winners run".
         """
+        # Record trade result for signal performance tracking BEFORE AI check
+        if exit_reason in ["roi", "trailing_stop_profit", "exit_signal"]:
+            current_profit = trade.calc_profit_ratio(rate)
+            self.record_trade_result(trade.enter_tag, current_profit)
+        
         # 1. Backtesting Guard & Enabled Check
         if self.dp.runmode.value in ("backtest", "hyperopt") or not getattr(
             self, "llm_enabled", False
