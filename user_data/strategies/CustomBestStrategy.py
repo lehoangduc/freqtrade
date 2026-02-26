@@ -24,21 +24,21 @@ logger = logging.getLogger(__name__)
 
 
 class TradeDecision(BaseModel):
+    reasoning: str = Field(description="A concise 1-sentence technical reason for your decision.")
     decision: bool = Field(
         description="Set to True if the trade setup is highly probable / safe. Set to False if this is likely a trap, dump, or poor setup."  # noqa: E501
     )
     confidence: int = Field(
         description="Confidence score from 0 to 100 for this decision. Above 65 is required for entry."  # noqa: E501
     )
-    reasoning: str = Field(description="A concise 1-sentence technical reason for your decision.")
 
 
 class ExitDecision(BaseModel):
-    hold_trade: bool = Field(
-        description="Set to True to REJECT the exit order and HOLD for more profit because a massive breakout is occurring. Set to False to ALLOW selling and take the money now."  # noqa: E501
-    )
     reasoning: str = Field(
         description="A concise 1-sentence analytical reason why we should hold or sell right now."
+    )
+    hold_trade: bool = Field(
+        description="Set to True to REJECT the exit order and HOLD for more profit because a massive breakout is occurring. Set to False to ALLOW selling and take the money now."  # noqa: E501
     )
 
 
@@ -68,10 +68,10 @@ class CustomBestStrategy(IStrategy):
         if api_key:
             self.llm_client = genai.Client(api_key=api_key)
             self.llm_enabled = True
-            # Cache: {(pair, candle_timestamp) -> bool} - ONE API call per candle per pair
+            # Cache: {(pair, side, entry_tag) -> (decision, timestamp)}
             self.ai_candle_cache: dict = {}
             # Daily budget: track calls to cap max spend
-            self.ai_daily_budget = 100  # Max 100 AI calls per day (~$0.002 total)
+            self.ai_daily_budget = 50  # Max 50 AI calls per day (~$0.001 total)
             self.usage_file = "user_data/gemini_usage.json"
             self._load_gemini_usage()
             
@@ -755,33 +755,43 @@ class CustomBestStrategy(IStrategy):
                     self._save_gemini_usage()
                 return True
 
-            # --- CANDLE CACHE CHECK ---
-            candle_ts = latest.name  # DatetimeIndex
-            cache_key = (pair, candle_ts)
+            # --- DECISION CACHE CHECK (COST REDUCTION) ---
+            # If we asked Gemini about this exact pair + side + strategy signal 
+            # within the last 15 minutes (3 candles), reuse the decision to save API cost.
+            current_timestamp = latest.name.timestamp() if hasattr(latest.name, "timestamp") else current_time.timestamp()
+            cache_key = (pair, side, entry_tag)
+            
             if cache_key in self.ai_candle_cache:
-                cached = self.ai_candle_cache[cache_key]
-                logger.info(
-                    f"📦 Cached AI decision for {pair}: {'APPROVED' if cached else 'REJECTED'}"
-                )
-                return cached
+                cached_decision, cached_time = self.ai_candle_cache[cache_key]
+                # Check if the cache is still valid (less than 900 seconds / 15 mins old)
+                if (current_timestamp - cached_time) < 900:
+                    logger.info(
+                        f"📦 Reusing Cached AI decision for {pair} ({entry_tag}): {'APPROVED' if cached_decision else 'REJECTED'}"
+                    )
+                    return cached_decision
 
             self.ai_daily_calls += 1
             self._save_gemini_usage()
             
             msg = f"🧠 Asking Gemini AI [{self.ai_daily_calls}/{self.ai_daily_budget} today] to analyze {side} on {pair} at {rate}..."  # noqa: E501
             logger.info(msg)
-            current_rsi_1h = f"{latest.get('rsi_1h', 0):.1f}"
-            current_ema50_1h = f"{latest.get('ema_50_1h', 0):.4f}"
-            current_ema200_1h = f"{latest.get('ema_200_1h', 0):.4f}"
-            current_atr = f"{latest.get('atr', 0):.4f}"
-            current_vwap = f"{latest.get('vwap', 0):.4f}"
+            
+            # Format inputs precisely to save tokens
+            fmt = "{:.2f}"
+            current_rsi_1h = fmt.format(latest.get('rsi_1h', 0))
+            current_ema50_1h = fmt.format(latest.get('ema_50_1h', 0))
+            current_ema200_1h = fmt.format(latest.get('ema_200_1h', 0))
+            current_atr = fmt.format(latest.get('atr', 0))
+            current_vwap = fmt.format(latest.get('vwap', 0))
+            btc_safe = int(latest.get('btc_safe_1h', 1.0))
 
             prompt = f"Trade: {side} @ {rate}\n"
-            prompt += f"Context: VWAP={current_vwap} | 1hRSI={current_rsi_1h} | 1hEMA50/200={current_ema50_1h}/{current_ema200_1h} | ATR={current_atr}\n\n"  # noqa: E501
+            prompt += f"Strategy Signal: {entry_tag}\n"
+            prompt += f"Context: VWAP={current_vwap} | 1hRSI={current_rsi_1h} | 1hEMA50/200={current_ema50_1h}/{current_ema200_1h} | ATR={current_atr} | BTC_Safe={btc_safe}\n\n"  # noqa: E501
             prompt += "Last 10 Candles (5m):\n"
             prompt += "Close | Volume | RSI | MFI | ADX | TEMA | BB_Mid\n"
             for _, row in last_candles.iterrows():
-                prompt += f"{row['close']:.4f} | {row['volume']:.2f} | {row['rsi']:.1f} | {row['mfi']:.1f} | {row['adx']:.1f} | {row['tema']:.4f} | {row['bb_middleband']:.4f}\n"  # noqa: E501
+                prompt += f"{fmt.format(row['close'])} | {fmt.format(row['volume'])} | {fmt.format(row['rsi'])} | {fmt.format(row['mfi'])} | {fmt.format(row['adx'])} | {fmt.format(row['tema'])} | {fmt.format(row['bb_middleband'])}\n"  # noqa: E501
 
             response = self.llm_client.models.generate_content(
                 model="gemini-2.5-flash",
@@ -802,7 +812,7 @@ class CustomBestStrategy(IStrategy):
                 result_msg = f"✅ Gemini APPROVED {side} on {pair} (Confidence: {confidence}%). {result.get('reasoning')}"  # noqa: E501
                 logger.info(result_msg)
                 self.dp.send_msg(result_msg, always_send=True)
-                self.ai_candle_cache[cache_key] = True
+                self.ai_candle_cache[cache_key] = (True, current_timestamp)
                 # Prune old cache entries (keep max 200 entries)
                 if len(self.ai_candle_cache) > 200:
                     oldest = next(iter(self.ai_candle_cache))
@@ -812,7 +822,7 @@ class CustomBestStrategy(IStrategy):
                 decision_str = "REJECTED" if not result.get("decision") else "LOW CONFIDENCE"
                 result_msg = f"❌ Gemini {decision_str} {side} on {pair} (Confidence: {confidence}%). {result.get('reasoning')}"  # noqa: E501
                 logger.info(result_msg)
-                self.ai_candle_cache[cache_key] = False
+                self.ai_candle_cache[cache_key] = (False, current_timestamp)
                 return False
 
         except Exception as e:
@@ -872,11 +882,13 @@ class CustomBestStrategy(IStrategy):
 
             last_candles = dataframe.tail(10)
 
+            # Format inputs precisely to save tokens
+            fmt = "{:.2f}"
             prompt = f"OPEN: {trade.trade_direction} | Profit: {current_profit * 100:.2f}% | Exit Reason: {exit_reason}\n\n"  # noqa: E501
             prompt += "Last 10 Candles (5m):\n"
             prompt += "Close | Volume | RSI | MFI | ADX | 1hMFI\n"
             for _, row in last_candles.iterrows():
-                prompt += f"{row['close']:.4f} | {row['volume']:.2f} | {row['rsi']:.1f} | {row['mfi']:.1f} | {row['adx']:.1f} | {row.get('mfi_1h', 50):.1f}\n"  # noqa: E501
+                prompt += f"{fmt.format(row['close'])} | {fmt.format(row['volume'])} | {fmt.format(row['rsi'])} | {fmt.format(row['mfi'])} | {fmt.format(row['adx'])} | {fmt.format(row.get('mfi_1h', 50))}\n"  # noqa: E501
 
             msg = f"💎 Bot wants to take profit ({current_profit * 100:.2f}%) on {pair} at {rate}. Asking Gemini if we should hold the breakout..."  # noqa: E501
             logger.info(msg)
