@@ -45,12 +45,13 @@
         "key": "1136b688-4f4d-40d7-b5d0-9cc08dc8de17",
         "secret": "00EEBB978DD0BB622AAF1E3EB246F981",
         "password": "fjC,8t9y'WN6Q'|.@",
-        "use_ws": false,
+        "enable_ws": false,
         "ws_connection_limit": 100,
         "ws_subscription_delay": 0.3,
         "ccxt_config": {
             "timeout": 30000,
             "enableRateLimit": true,
+            "ohlcv_has_history": false,
             "options": {
                 "enable_ohlcv_cache": false
             }
@@ -58,6 +59,7 @@
         "ccxt_async_config": {
             "timeout": 30000,
             "enableRateLimit": true,
+            "ohlcv_has_history": false,
             "options": {
                 "enable_ohlcv_cache": false
             }
