@@ -269,11 +269,12 @@ class CustomBestStrategy(IStrategy):
             else:
                 lock_end_utc = lock_end.replace(tzinfo=timezone.utc)
 
-            # Convert to Local Time (+7) for display
-            lock_end_local = lock_end_utc + timedelta(hours=7)
+            # Convert to Local Time (respects TZ environment variable)
+            lock_end_local = lock_end_utc.astimezone()
             
-            # Format message
-            msg = f"⛔ GLOBAL LOCK ACTIVE\nReason: {lock_reason}\nUntil: {lock_end_local.strftime('%H:%M:%S')} (Local) / {lock_end_utc.strftime('%H:%M:%S')} (UTC)"  # noqa: E501
+            # Format message with DATE to avoid midnight confusion
+            date_fmt = "%Y-%m-%d %H:%M:%S"
+            msg = f"⛔ GLOBAL LOCK ACTIVE\nReason: {lock_reason}\nUntil: {lock_end_local.strftime(date_fmt)} (Local) / {lock_end_utc.strftime(date_fmt)} (UTC)"  # noqa: E501
             
             # Only send if it's a new lock or different reason
             if msg != self.last_global_lock_msg:

@@ -105,8 +105,9 @@ def format_date(date: datetime | None, fallback: str = "") -> str:
     :param fallback: value to return if date is None
     """
     if date:
-        if date.tzinfo:
-            date = date.astimezone()
+        if not date.tzinfo:
+            date = date.replace(tzinfo=UTC)
+        date = date.astimezone()
         return date.strftime(DATETIME_PRINT_FORMAT)
     return fallback
 
