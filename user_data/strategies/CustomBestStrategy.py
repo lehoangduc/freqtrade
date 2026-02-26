@@ -71,7 +71,7 @@ class CustomBestStrategy(IStrategy):
             # Cache: {(pair, side, entry_tag) -> (decision, timestamp)}
             self.ai_candle_cache: dict = {}
             # Daily budget: track calls to cap max spend
-            self.ai_daily_budget = 50  # Max 50 AI calls per day (~$0.001 total)
+            self.ai_daily_budget = int(os.environ.get("AI_DAILY_BUDGET", 50))
             self.usage_file = "user_data/gemini_usage.json"
             self._load_gemini_usage()
             
