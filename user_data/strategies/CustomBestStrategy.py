@@ -173,9 +173,9 @@ class CustomBestStrategy(IStrategy):
         return [
             {
                 # LAYER 1: The "Breather"
-                # Wait 5 candles (25 mins) before trying to trade a coin we just exited.
+                # Wait 10 candles (50 mins) before trying to trade a coin we just exited.
                 "method": "CooldownPeriod",
-                "stop_duration_candles": 5,
+                "stop_duration_candles": 10,
             },
             {
                 # LAYER 2: The "Toxic Pair" filter
@@ -183,17 +183,17 @@ class CustomBestStrategy(IStrategy):
                 "method": "StoplossGuard",
                 "lookback_period_candles": 48,  # 4 hours
                 "trade_limit": 2,
-                "stop_duration_candles": 24,  # ...ban THAT specific coin for 2 hours.
+                "stop_duration_candles": 48,  # ...ban THAT specific coin for 4 hours.
                 "only_per_pair": True,
             },
             {
                 # LAYER 3: The "Loser" filter
-                # If a pair has lost 3 trades in a row recently...
+                # If a pair has lost trades recently...
                 "method": "LowProfitPairs",
                 "lookback_period_candles": 144,  # 12 hours
-                "trade_limit": 3,
-                "stop_duration_candles": 48,  # ...block it for 4 hours (market makers are playing us).  # noqa: E501
-                "required_profit": 0.01,
+                "trade_limit": 2,  # Reduced from 3 to 2
+                "stop_duration_candles": 72,  # Block for 6 hours
+                "required_profit": 0.005,  # Lowered threshold
             },
             {
                 # LAYER 4: The "Flash Crash" global panic switch
@@ -201,8 +201,17 @@ class CustomBestStrategy(IStrategy):
                 "method": "MaxDrawdown",
                 "lookback_period_candles": 288,  # 24 hours
                 "trade_limit": 1,
-                "stop_duration_candles": 24,  # ...Stop ALL trading for 2 hours to weather the storm.  # noqa: E501
-                "max_allowed_drawdown": 0.25,
+                "stop_duration_candles": 48,  # Stop ALL trading for 4 hours
+                "max_allowed_drawdown": 0.15,  # Reduced from 25% to 15%
+            },
+            {
+                # LAYER 5: Global stoploss protection
+                # If 3 stoplosses occur within 6 hours, stop trading for 12 hours
+                "method": "StoplossGuard",
+                "lookback_period_candles": 72,  # 6 hours
+                "trade_limit": 3,
+                "stop_duration_candles": 144,  # 12 hours
+                "only_per_pair": False,  # Global protection
             },
         ]
 
@@ -401,13 +410,28 @@ class CustomBestStrategy(IStrategy):
         dataframe["dynamic_sell_rsi"] = short_rsi_limit
         dataframe.loc[dataframe["atr_pct"] > 1.0, "dynamic_sell_rsi"] = short_rsi_limit + 5
 
+        # --- SECURITY FILTERS ---
+        # 1. Avoid trading in extreme volatility (ATR > 3% of price)
+        dataframe["high_volatility"] = (dataframe["atr_pct"] > 3.0).astype(int)
+        
+        # 2. Require minimum volume (avoid illiquid pairs)
+        dataframe["min_volume"] = (dataframe["volume"] > dataframe["volume_mean"] * 0.5).astype(int)
+        
+        # 3. Combined security condition
+        dataframe["secure_to_trade"] = (
+            (dataframe["high_volatility"] == 0)  # Not in extreme volatility
+            & (dataframe["min_volume"] == 1)  # Has minimum volume
+            & (dataframe["btc_safe_1h"] == 1.0)  # BTC is safe
+        ).astype(int)
+
         # ============================================================
         # SIGNAL 1 — SNIPER: Deep dip buy (original strict signal)
-        # 8 conditions must align — rare but high confidence.
+        # 7 conditions must align — rare but high confidence.
         # ============================================================
         dataframe.loc[
             (
-                (dataframe["rsi"] < dataframe["dynamic_buy_rsi"])
+                (dataframe["secure_to_trade"] == 1)  # Security filter
+                & (dataframe["rsi"] < dataframe["dynamic_buy_rsi"])
                 & (dataframe["mfi"] < long_mfi_limit)
                 & (dataframe["tema"] <= dataframe["bb_middleband"])
                 & (dataframe["close"] < dataframe["vwap"])
@@ -415,7 +439,6 @@ class CustomBestStrategy(IStrategy):
                 & (dataframe["rsi_1h"] > long_rsi_1h_limit)
                 & (dataframe["adx"] > 15)
                 & (dataframe["cmf"] < -0.1)
-                & (dataframe["btc_safe_1h"] == 1.0)
             ),
             ["enter_long", "enter_tag"],
         ] = (1, "sniper_dip")
@@ -423,17 +446,15 @@ class CustomBestStrategy(IStrategy):
         # ============================================================
         # SIGNAL 2 — SCOUT: Bollinger Band bounce in confirmed uptrend
         # Catches healthy pullbacks in coins trending up on 1h.
-        # Less strict than sniper — the 1h uptrend IS the conviction.
         # ============================================================
         dataframe.loc[
             (
-                (dataframe["enter_long"] == 0)  # Don't override sniper
-                & (dataframe["close"] <= dataframe["bb_lowerband"] * 1.01)  # At/near lower BB
+                (dataframe["secure_to_trade"] == 1)  # Security filter
+                & (dataframe["enter_long"] == 0)  # Don't override sniper
+                & (dataframe["close"] <= dataframe["bb_lowerband"] * 1.015)  # At/near lower BB
                 & (dataframe["ema_50_1h"] > dataframe["ema_200_1h"])  # 1h uptrend confirmed
-                & (dataframe["rsi"] < 40)  # Moderately oversold (not extreme required)
-                & (dataframe["volume_spike"] == 1)  # Volume confirms the move
+                & (dataframe["rsi"] < 45)  # Moderately oversold
                 & (dataframe["volume"] > 0)
-                & (dataframe["btc_safe_1h"] == 1.0)
             ),
             ["enter_long", "enter_tag"],
         ] = (1, "bb_bounce_uptrend")
@@ -441,31 +462,29 @@ class CustomBestStrategy(IStrategy):
         # ============================================================
         # SIGNAL 3 — REVERSAL: Volume spike capitulation near support
         # Sharp selloffs with huge volume often snap back.
-        # Requires 1h uptrend to avoid catching true crashes.
         # ============================================================
         dataframe.loc[
             (
-                (dataframe["enter_long"] == 0)  # Don't override previous signals
+                (dataframe["secure_to_trade"] == 1)  # Security filter
+                & (dataframe["enter_long"] == 0)  # Don't override previous signals
                 & (dataframe["rsi"] < 35)  # Oversold
                 & (dataframe["volume_spike"] == 1)  # Big volume = capitulation
                 & (dataframe["close"] < dataframe["bb_middleband"])  # Below BB mid
                 & (dataframe["close"] > dataframe["bb_lowerband"])  # Not in freefall
                 & (dataframe["ema_50_1h"] > dataframe["ema_200_1h"])  # 1h uptrend
-                & (dataframe["mfi"] < 40)  # Money flowing out (capitulation)
                 & (dataframe["volume"] > 0)
-                & (dataframe["btc_safe_1h"] == 1.0)
             ),
             ["enter_long", "enter_tag"],
         ] = (1, "volume_reversal")
 
-        # ============================================================
+# ============================================================
         # SIGNAL 4 — MOMENTUM: Breakout in confirmed uptrend
-        # Catches coins pumping with strong volume. Gemini AI is the
-        # key filter to avoid buying exhausted pumps.
+        # Catches coins pumping with strong volume.
         # ============================================================
         dataframe.loc[
             (
-                (dataframe["enter_long"] == 0)  # Don't override previous signals
+                (dataframe["secure_to_trade"] == 1)  # Security filter
+                & (dataframe["enter_long"] == 0)  # Don't override previous signals
                 & (dataframe["close"] > dataframe["vwap"])  # Above VWAP (strength)
                 & (dataframe["close"] > dataframe["ema_50_1h"])  # Price above 1h EMA50
                 & (dataframe["close"] > dataframe["bb_middleband"])  # Above BB mid (momentum)
@@ -474,7 +493,6 @@ class CustomBestStrategy(IStrategy):
                 & (dataframe["adx"] > 20)  # Trending (not sideways chop)
                 & (dataframe["volume"] > 0)
                 & (dataframe["rsi_1h"] > 45)  # 1h trend strength
-                & (dataframe["btc_safe_1h"] == 1.0)
             ),
             ["enter_long", "enter_tag"],
         ] = (1, "momentum_breakout")
@@ -486,18 +504,17 @@ class CustomBestStrategy(IStrategy):
 
         # ============================================================
         # SIGNAL 6 — SIMPLE ENTRY: Market entry with fewer conditions
-        # Fallback signal for when no other signals trigger. This is
-        # the "safety net" to ensure the bot actually enters trades.
+        # Fallback signal for when no other signals trigger.
         # ============================================================
         dataframe.loc[
             (
-                (dataframe["enter_long"] == 0)  # Only if no other signal fired
-                & (dataframe["rsi"] < 48)  # Not overbought (stricter from 50)
+                (dataframe["secure_to_trade"] == 1)  # Security filter
+                & (dataframe["enter_long"] == 0)  # Only if no other signal fired
+                & (dataframe["rsi"] < 45)  # Not overbought
                 & (dataframe["close"] > dataframe["ema_20"])  # Above short-term trend
                 & (dataframe["close"] > dataframe["ema_50_1h"])  # Above 1h trend
                 & (dataframe["rsi_1h"] > 45)  # 1h trend strength
                 & (dataframe["volume"] > dataframe["volume_mean"] * 1.2)  # Volume filter
-                & (dataframe["btc_safe_1h"] == 1.0)
             ),
             ["enter_long", "enter_tag"],
         ] = (1, "simple_entry")
@@ -556,15 +573,23 @@ class CustomBestStrategy(IStrategy):
             ["exit_long", "exit_tag"],
         ] = (1, "rsi_momentum_fade")
 
-        # --- EXIT LONG: Price crosses under EMA20 - Only trigger when price < EMA20 - 0.5% (avoid minor dips)
+        # --- EXIT LONG: Price crosses under EMA20 - Only trigger when price < EMA20 * 0.995 (avoid minor dips)
+        # AND RSI < 45 to avoid triggering on sideways movement
         dataframe.loc[
-            (dataframe["close"] < dataframe["ema_20"] * 0.995),
+            (
+                (dataframe["close"] < dataframe["ema_20"] * 0.995)
+                & (dataframe["rsi"] < 45)
+            ),
             ["exit_long", "exit_tag"],
         ] = (1, "price_ema20_cross_below")
 
         # --- EXIT LONG: Price above BB upper (take profit) ---
+        # Exit when price > BB upper with bullish candle
         dataframe.loc[
-            (dataframe["close"] > dataframe["bb_upperband"]),
+            (
+                (dataframe["close"] > dataframe["bb_upperband"])
+                & (dataframe["close"] > dataframe["open"])
+            ),
             ["exit_long", "exit_tag"],
         ] = (1, "bb_upper_take_profit")
 
@@ -616,25 +641,24 @@ class CustomBestStrategy(IStrategy):
             return "forced_exit_4h_max"
 
         # --- PROFIT TARGET EXIT ---
-        # Exit if RSI is overbought (>70) and profit > 0.8%
-        if last_candle["rsi"] > 70 and current_profit > 0.008:
+        # Exit if RSI is overbought (>70) and profit > 0.5%
+        if last_candle["rsi"] > 70 and current_profit > 0.005:
             return "take_profit_rsi_overbought"
-
-        # Exit if price is above BB upper band with >0.3% profit
-        if current_rate > last_candle["bb_upperband"] and current_profit > 0.003:
+        
+        # Exit if price is above BB upper band with >0.5% profit
+        if current_rate > last_candle["bb_upperband"] and current_profit > 0.005:
             return "take_profit_bb_upper"
         
-        # Take-profit for momentum_breakout trades at realistic 0.3% target
-        if trade.enter_tag == "momentum_breakout" and current_profit > 0.003:
-            return "momentum_take_profit_03"
+        # Take-profit for momentum_breakout trades at 0.8% target
+        if trade.enter_tag == "momentum_breakout" and current_profit > 0.008:
+            return "momentum_take_profit_08"
 
         # --- Tag-Specific Exit Logic ---
         momentum_tags = ["momentum_breakout", "simple_entry"]
         dip_buy_tags = ["sniper_dip", "bb_bounce", "volume_reversal"]
 
         if trade.enter_tag in momentum_tags:
-            # EXIT LONG (Momentum trades): momentum fading only on larger losses
-            # RSI < 40 required for momentum_fade_rsi_drop, RSI < 45 for ema20 drop
+            # EXIT LONG (Momentum trades): momentum fading only on losses > -0.3%
             if last_candle["rsi"] < 40 and current_profit < -0.003:
                 return "momentum_fade_rsi_drop"
             if current_rate < last_candle["ema_20"] * 0.995 and last_candle["rsi"] < 45 and current_profit < -0.003:
