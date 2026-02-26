@@ -163,7 +163,7 @@ class CustomBestStrategy(IStrategy):
                 "lookback_period_candles": 144,  # 12 hours
                 "trade_limit": 3,
                 "stop_duration_candles": 48,  # ...block it for 4 hours (market makers are playing us).  # noqa: E501
-                "required_profit": 0.0,
+                "required_profit": 0.01,
             },
             {
                 # LAYER 4: The "Flash Crash" global panic switch
@@ -309,6 +309,7 @@ class CustomBestStrategy(IStrategy):
         dataframe = merge_informative_pair(
             dataframe, informative, self.timeframe, inf_tf, ffill=True
         )
+        dataframe["mfi_1h"] = dataframe["mfi_1h"].fillna(50)
 
         # --- GLOBAL BTC MARKET FILTER ---
         # Get BTC pair name to map its informative columns
@@ -466,6 +467,24 @@ class CustomBestStrategy(IStrategy):
             ["enter_long", "enter_tag"],
         ] = (1, "trend_follow")
 
+        # ============================================================
+        # SIGNAL 6 — SIMPLE ENTRY: Market entry with fewer conditions
+        # Fallback signal for when no other signals trigger. This is
+        # the "safety net" to ensure the bot actually enters trades.
+        # ============================================================
+        dataframe.loc[
+            (
+                (dataframe["enter_long"] == 0)  # Only if no other signal fired
+                & (dataframe["rsi"] < 50)  # Not overbought (lowered from 55)
+                & (dataframe["close"] > dataframe["ema_20"])  # Above short-term trend
+                & (dataframe["close"] > dataframe["ema_50_1h"])  # Above 1h trend
+                & (dataframe["rsi_1h"] > 45)  # 1h trend strength (higher from 40)
+                & (dataframe["volume"] > 0)
+                & (dataframe["btc_safe_1h"] == 1.0)
+            ),
+            ["enter_long", "enter_tag"],
+        ] = (1, "simple_entry")
+
         # --- SHORT Entry: Adaptive RSI + MFI peak + VWAP Premium ---
         dataframe.loc[
             (
@@ -488,8 +507,8 @@ class CustomBestStrategy(IStrategy):
             c = dataframe.iloc[idx]
             fired = int(c.get("enter_long", 0))
             tag = c.get("enter_tag", "") if fired else "none"
-            if fired == 0 and label == "CLOSED[-2]" and metadata["pair"] in ("ADA/USDT", "ETH/USDT", "BTC/USDT"):
-                logger.info(
+            if fired == 0 and label == "CLOSED[-2]":
+                logger.debug(
                     f"📊 {metadata['pair']} {label} enter={fired} tag={tag} | "
                     f"RSI={c.get('rsi', 0):.1f} ADX={c.get('adx', 0):.1f} "
                     f"ema20={c.get('ema_20', 0):.4f} close={c['close']:.4f} "
@@ -514,14 +533,29 @@ class CustomBestStrategy(IStrategy):
         dataframe.loc[:, "exit_short"] = 0
         dataframe.loc[:, "exit_tag"] = ""
 
-        # --- EXIT LONG (Emergency Fallback): ---
-        # Only extreme conditions here. Real exits handled in custom_exit.
+        # --- EXIT LONG: Momentum fading (RSI < 50) ---
         dataframe.loc[
-            (
-                (qtpylib.crossed_above(dataframe["rsi"], self.sell_rsi.value + 10)) # Extreme overbought
-            ),
+            (dataframe["rsi"] < 50),
             ["exit_long", "exit_tag"],
-        ] = (1, "extreme_overbought_fallback")
+        ] = (1, "rsi_momentum_fade")
+
+        # --- EXIT LONG: Price crosses under EMA20 ---
+        dataframe.loc[
+            (qtpylib.crossed_below(dataframe["close"], dataframe["ema_20"])),
+            ["exit_long", "exit_tag"],
+        ] = (1, "price_ema20_cross_below")
+
+        # --- EXIT LONG: Price above BB upper (take profit) ---
+        dataframe.loc[
+            (dataframe["close"] > dataframe["bb_upperband"]),
+            ["exit_long", "exit_tag"],
+        ] = (1, "bb_upper_take_profit")
+
+        # --- EXIT LONG: Extreme overbought RSI ---
+        dataframe.loc[
+            (qtpylib.crossed_above(dataframe["rsi"], self.sell_rsi.value)),
+            ["exit_long", "exit_tag"],
+        ] = (1, "extreme_overbought")
 
         # --- EXIT SHORT: RSI oversold or price below lower Bollinger Band ---
         dataframe.loc[
@@ -548,23 +582,41 @@ class CustomBestStrategy(IStrategy):
         Allows us to dynamically escape sideways markets or "unclog" bad trades.
         """
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        if dataframe.empty:
+            return None
         last_candle = dataframe.iloc[-1].squeeze()
 
         # How many minutes has this trade been open?
         trade_duration = (current_time - trade.open_date_utc).total_seconds() / 60
 
+        # --- TIME-BASED FORCED EXIT (Stuck trades) ---
+        # Exit if stuck for 2+ hours and not profitable
+        if trade_duration > 120 and current_profit < 0.005:
+            return "forced_exit_stuck_2h"
+
+        # Exit if stuck for 4+ hours regardless of profit
+        if trade_duration > 240:
+            return "forced_exit_4h_max"
+
+        # --- PROFIT TARGET EXIT ---
+        # Exit if RSI is overbought (>70) and profit > 0.8%
+        if last_candle["rsi"] > 70 and current_profit > 0.008:
+            return "take_profit_rsi_overbought"
+
+        # Exit if price is above BB upper band with >0.5% profit
+        if current_rate > last_candle["bb_upperband"] and current_profit > 0.005:
+            return "take_profit_bb_upper"
+
         # --- Tag-Specific Exit Logic ---
-        momentum_tags = ["momentum_breakout", "trend_follow"]
+        momentum_tags = ["momentum_breakout", "trend_follow", "simple_entry"]
         dip_buy_tags = ["sniper_dip", "bb_bounce", "volume_reversal"]
 
         if trade.enter_tag in momentum_tags:
-            # EXIT LONG (Momentum trades): momentum fading
-            # RSI drops below 50 = trend losing steam. EMA20 cross down = short-term trend broke.
-            if last_candle["rsi"] < 50:
+            # EXIT LONG (Momentum trades): momentum fading only on larger losses
+            # RSI < 45 OR (rate < ema20 AND rsi < 45) to avoid catching minor pullbacks
+            if last_candle["rsi"] < 45 and current_profit < -0.005:
                 return "momentum_fade_rsi_drop"
-            # We can't use qtpylib.crossed_below easily in custom_exit without historical candle lookback,
-            # so we just check if it's currently below the thresholds
-            if current_rate < last_candle["ema_20"] and last_candle["rsi"] < 55:
+            if current_rate < last_candle["ema_20"] and last_candle["rsi"] < 45 and current_profit < -0.005:
                 return "momentum_fade_ema20_drop"
 
         elif trade.enter_tag in dip_buy_tags:
@@ -575,12 +627,10 @@ class CustomBestStrategy(IStrategy):
                 return "take_profit_bb_upper"
 
         # --- TIME-BASED EXITS (Capital Free-up) ---
-        # If the trade has been stuck and flat for 24 hours (1440 minutes)...
+        # If the trade has been stuck for 24+ hours...
         if trade_duration > 1440:
-            # If we are slightly profitable or breakeven, exit immediately to free up money
             if current_profit >= 0.005:
                 return "stagnant_profitable_24h"
-            # If we are losing money, wait up to 48 hours (2880 mins) before surrendering it
             if trade_duration > 2880:
                 return "surrender_stagnant_48h"
 
@@ -607,17 +657,16 @@ class CustomBestStrategy(IStrategy):
 
         last_candle = dataframe.iloc[-1]
 
-        # Use 2.5x the Average True Range as the acceptable volatility cushion
+        # Use 1.5x the Average True Range as the acceptable volatility cushion (reduced from 2.5x)
         atr_value = last_candle["atr"]
-        atr_stop_distance = atr_value * 2.5
-
-        # We must calculate what percentage that ATR distance is from the current asset price
-        # E.g. If BTC is 60000 and ATR is 1000, 2.5 * 1000 = 2500 distance.
-        # 2500 / 60000 = 4.16%
+        atr_stop_distance = atr_value * 1.5
+        # Minimum 1% buffer to avoid catching normal volatility
         stoploss_pct = atr_stop_distance / current_rate
-
-        # Return negative value for long stoploss, positive for short stoploss
-        # Limit the maximum absolute stoploss to 15% to prevent catastrophic dumps
+        if stoploss_pct < 0.01:
+            stoploss_pct = 0.01
+        # We must calculate what percentage that ATR distance is from the current asset price
+        # E.g. If BTC is 60000 and ATR is 1000, 1.5 * 1000 = 1500 distance.
+        # 1500 / 60000 = 2.5%
         stoploss_pct = min(stoploss_pct, 0.15)
 
         if trade.is_short:
@@ -758,13 +807,13 @@ class CustomBestStrategy(IStrategy):
             # --- DECISION CACHE CHECK (COST REDUCTION) ---
             # If we asked Gemini about this exact pair + side + strategy signal 
             # within the last 15 minutes (3 candles), reuse the decision to save API cost.
-            current_timestamp = latest.name.timestamp() if hasattr(latest.name, "timestamp") else current_time.timestamp()
+            candle_timestamp = latest.name.timestamp() if hasattr(latest.name, "timestamp") else current_time.timestamp()
             cache_key = (pair, side, entry_tag)
             
             if cache_key in self.ai_candle_cache:
                 cached_decision, cached_time = self.ai_candle_cache[cache_key]
                 # Check if the cache is still valid (less than 900 seconds / 15 mins old)
-                if (current_timestamp - cached_time) < 900:
+                if (candle_timestamp - cached_time) < 900:
                     logger.info(
                         f"📦 Reusing Cached AI decision for {pair} ({entry_tag}): {'APPROVED' if cached_decision else 'REJECTED'}"
                     )
@@ -808,11 +857,12 @@ class CustomBestStrategy(IStrategy):
             result = json.loads(response.text)
 
             confidence = result.get("confidence", 0)
-            if result.get("decision") is True and confidence >= 65:
+            # Lowered from 65 to 55 - better trade capture rate
+            if result.get("decision") is True and confidence >= 55:
                 result_msg = f"✅ Gemini APPROVED {side} on {pair} (Confidence: {confidence}%). {result.get('reasoning')}"  # noqa: E501
                 logger.info(result_msg)
                 self.dp.send_msg(result_msg, always_send=True)
-                self.ai_candle_cache[cache_key] = (True, current_timestamp)
+                self.ai_candle_cache[cache_key] = (True, candle_timestamp)
                 # Prune old cache entries (keep max 200 entries)
                 if len(self.ai_candle_cache) > 200:
                     oldest = next(iter(self.ai_candle_cache))
@@ -822,7 +872,7 @@ class CustomBestStrategy(IStrategy):
                 decision_str = "REJECTED" if not result.get("decision") else "LOW CONFIDENCE"
                 result_msg = f"❌ Gemini {decision_str} {side} on {pair} (Confidence: {confidence}%). {result.get('reasoning')}"  # noqa: E501
                 logger.info(result_msg)
-                self.ai_candle_cache[cache_key] = (False, current_timestamp)
+                self.ai_candle_cache[cache_key] = (False, candle_timestamp)
                 return False
 
         except Exception as e:
@@ -886,7 +936,7 @@ class CustomBestStrategy(IStrategy):
             fmt = "{:.2f}"
             prompt = f"OPEN: {trade.trade_direction} | Profit: {current_profit * 100:.2f}% | Exit Reason: {exit_reason}\n\n"  # noqa: E501
             prompt += "Last 10 Candles (5m):\n"
-            prompt += "Close | Volume | RSI | MFI | ADX | 1hMFI\n"
+            prompt += "Close | Volume | RSI | MFI | ADX | mfi_1h\n"
             for _, row in last_candles.iterrows():
                 prompt += f"{fmt.format(row['close'])} | {fmt.format(row['volume'])} | {fmt.format(row['rsi'])} | {fmt.format(row['mfi'])} | {fmt.format(row['adx'])} | {fmt.format(row.get('mfi_1h', 50))}\n"  # noqa: E501
 
