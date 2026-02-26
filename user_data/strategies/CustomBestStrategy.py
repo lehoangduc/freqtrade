@@ -252,20 +252,28 @@ class CustomBestStrategy(IStrategy):
         if not self.dp:
             return
 
-        # Check for global locks (pair == "*")
-        locks = PairLocks.get_all_locks()
-        global_locks = [l for l in locks if l.pair == "*" and l.active]
+        # Check for global locks (pair == "*") - use filtered helper to skip expired ones
+        now_utc = datetime.now(timezone.utc)
+        # get_pair_locks handles db vs backtest and filtering by time/active status
+        global_locks = PairLocks.get_pair_locks("*", now=now_utc)
 
         if global_locks:
             # Get the most relevant global lock (the one with the latest end time)
             latest_lock = max(global_locks, key=lambda x: x.lock_end_time)
             lock_reason = latest_lock.reason or "Global protection triggered"
             lock_end = latest_lock.lock_end_time
-            # Convert UTC lock end to Local Time (+7) for clarity
-            lock_end_local = lock_end + timedelta(hours=7)
+            
+            # Ensure lock_end is naive for timedelta math if it's retrieved as naive from DB
+            if lock_end.tzinfo:
+                lock_end_utc = lock_end.astimezone(timezone.utc)
+            else:
+                lock_end_utc = lock_end.replace(tzinfo=timezone.utc)
+
+            # Convert to Local Time (+7) for display
+            lock_end_local = lock_end_utc + timedelta(hours=7)
             
             # Format message
-            msg = f"⛔ GLOBAL LOCK ACTIVE\nReason: {lock_reason}\nUntil: {lock_end_local.strftime('%H:%M:%S')} (Local) / {lock_end.strftime('%H:%M:%S')} (UTC)"  # noqa: E501
+            msg = f"⛔ GLOBAL LOCK ACTIVE\nReason: {lock_reason}\nUntil: {lock_end_local.strftime('%H:%M:%S')} (Local) / {lock_end_utc.strftime('%H:%M:%S')} (UTC)"  # noqa: E501
             
             # Only send if it's a new lock or different reason
             if msg != self.last_global_lock_msg:
