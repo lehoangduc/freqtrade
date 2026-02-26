@@ -50,11 +50,17 @@
         "ws_subscription_delay": 0.3,
         "ccxt_config": {
             "timeout": 30000,
-            "enableRateLimit": true
+            "enableRateLimit": true,
+            "options": {
+                "enable_ohlcv_cache": false
+            }
         },
         "ccxt_async_config": {
             "timeout": 30000,
-            "enableRateLimit": true
+            "enableRateLimit": true,
+            "options": {
+                "enable_ohlcv_cache": false
+            }
         },
         "pair_whitelist": [
             "BTC/USDT"

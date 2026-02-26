@@ -8,6 +8,7 @@
         "stoploss_on_exchange": false
     },
     "exchange": {
+        "use_ws": false,
         "pair_blacklist": [
             "BNB/USDT",
             "^(BUSD|USDC|USDP|TUSD|EUR|USDT|GBP)/USDT",
