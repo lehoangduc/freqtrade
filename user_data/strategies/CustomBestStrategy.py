@@ -9,7 +9,7 @@ from freqtrade.strategy import (
     merge_informative_pair,
     stoploss_from_absolute,
 )
-from freqtrade.persistence import Trade, Order
+from freqtrade.persistence import Trade, Order, PairLocks
 from datetime import datetime, timezone
 import talib.abstract as ta
 import freqtrade.vendor.qtpylib.indicators as qtpylib
@@ -211,14 +211,14 @@ class CustomBestStrategy(IStrategy):
             return
 
         # Check for global locks (pair == "*")
-        locks = self.dp.pairlocks()
-        global_locks = [l for l in locks if l["pair"] == "*"]
+        locks = PairLocks.get_all_locks()
+        global_locks = [l for l in locks if l.pair == "*" and l.active]
 
         if global_locks:
             # Get the most relevant global lock (the one with the latest end time)
-            latest_lock = max(global_locks, key=lambda x: x["lock_end_time"])
-            lock_reason = latest_lock.get("reason", "Global protection triggered")
-            lock_end = latest_lock["lock_end_time"]
+            latest_lock = max(global_locks, key=lambda x: x.lock_end_time)
+            lock_reason = latest_lock.reason or "Global protection triggered"
+            lock_end = latest_lock.lock_end_time
             
             # Format message
             msg = f"⛔ GLOBAL LOCK ACTIVE\nReason: {lock_reason}\nUntil: {lock_end.strftime('%Y-%m-%d %H:%M:%S UTC')}" # noqa: E501
