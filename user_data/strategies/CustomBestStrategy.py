@@ -10,7 +10,7 @@ from freqtrade.strategy import (
     stoploss_from_absolute,
 )
 from freqtrade.persistence import Trade, Order, PairLocks
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import talib.abstract as ta
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 import os
@@ -62,6 +62,9 @@ class CustomBestStrategy(IStrategy):
             self.can_short = False
         
         self.last_global_lock_msg = ""
+        self.signal_performance_file = "user_data/signal_performance.json"
+        self.signal_performance = {}
+        self._load_signal_performance()
 
         # Configure Google Generative AI for trade confirmation
         api_key = os.environ.get("GOOGLE_API_KEY")
@@ -206,11 +209,11 @@ class CustomBestStrategy(IStrategy):
             },
             {
                 # LAYER 5: Global stoploss protection
-                # If 3 stoplosses occur within 6 hours, stop trading for 12 hours
+                # If 3 stoplosses occur within 6 hours, stop trading for 4 hours
                 "method": "StoplossGuard",
                 "lookback_period_candles": 72,  # 6 hours
                 "trade_limit": 3,
-                "stop_duration_candles": 144,  # 12 hours
+                "stop_duration_candles": 48,  # Reduced from 144 to 48 (4 hours)
                 "only_per_pair": False,  # Global protection
             },
         ]
@@ -258,9 +261,11 @@ class CustomBestStrategy(IStrategy):
             latest_lock = max(global_locks, key=lambda x: x.lock_end_time)
             lock_reason = latest_lock.reason or "Global protection triggered"
             lock_end = latest_lock.lock_end_time
+            # Convert UTC lock end to Local Time (+7) for clarity
+            lock_end_local = lock_end + timedelta(hours=7)
             
             # Format message
-            msg = f"⛔ GLOBAL LOCK ACTIVE\nReason: {lock_reason}\nUntil: {lock_end.strftime('%Y-%m-%d %H:%M:%S UTC')}" # noqa: E501
+            msg = f"⛔ GLOBAL LOCK ACTIVE\nReason: {lock_reason}\nUntil: {lock_end_local.strftime('%H:%M:%S')} (Local) / {lock_end.strftime('%H:%M:%S')} (UTC)"  # noqa: E501
             
             # Only send if it's a new lock or different reason
             if msg != self.last_global_lock_msg:
@@ -274,9 +279,6 @@ class CustomBestStrategy(IStrategy):
                 logger.info(msg)
                 self.dp.send_msg(msg, always_send=True)
                 self.last_global_lock_msg = ""
-                self.signal_performance = {}  # Track win/loss by signal tag
-                self.signal_performance_file = "user_data/signal_performance.json"
-                self._load_signal_performance()
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
