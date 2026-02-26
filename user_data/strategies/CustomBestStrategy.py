@@ -165,12 +165,12 @@ class CustomBestStrategy(IStrategy):
             },
             {
                 # LAYER 4: The "Flash Crash" global panic switch
-                # If the bot's total wallet drops by 10% in a 24 hour period...
+                # If the bot's total wallet drops by 15% in a 24 hour period...
                 "method": "MaxDrawdown",
                 "lookback_period_candles": 288,  # 24 hours
                 "trade_limit": 1,
                 "stop_duration_candles": 24,  # ...Stop ALL trading for 2 hours to weather the storm.  # noqa: E501
-                "max_allowed_drawdown": 0.10,
+                "max_allowed_drawdown": 0.15,
             },
         ]
 
