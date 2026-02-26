@@ -60,6 +60,8 @@ class CustomBestStrategy(IStrategy):
         # This allows the SAME strategy file to work for both the spot and futures bots
         if config.get("trading_mode", "spot") != "futures":
             self.can_short = False
+        
+        self.last_global_lock_msg = ""
 
         # Configure Google Generative AI for trade confirmation
         api_key = os.environ.get("GOOGLE_API_KEY")
@@ -199,6 +201,40 @@ class CustomBestStrategy(IStrategy):
             informative_pairs.append((btc_pair, "1h"))
 
         return informative_pairs
+
+    def bot_loop_start(self, **kwargs) -> None:
+        """
+        Called at the start of every bot iteration.
+        Check for global pairlocks and notify via Telegram.
+        """
+        if not self.dp:
+            return
+
+        # Check for global locks (pair == "*")
+        locks = self.dp.pairlocks()
+        global_locks = [l for l in locks if l["pair"] == "*"]
+
+        if global_locks:
+            # Get the most relevant global lock (the one with the latest end time)
+            latest_lock = max(global_locks, key=lambda x: x["lock_end_time"])
+            lock_reason = latest_lock.get("reason", "Global protection triggered")
+            lock_end = latest_lock["lock_end_time"]
+            
+            # Format message
+            msg = f"⛔ GLOBAL LOCK ACTIVE\nReason: {lock_reason}\nUntil: {lock_end.strftime('%Y-%m-%d %H:%M:%S UTC')}" # noqa: E501
+            
+            # Only send if it's a new lock or different reason
+            if msg != self.last_global_lock_msg:
+                logger.warning(msg)
+                self.dp.send_msg(msg, always_send=True)
+                self.last_global_lock_msg = msg
+        else:
+            # If no global locks exist now, but we had one before, send a recovery message
+            if self.last_global_lock_msg:
+                msg = "✅ GLOBAL LOCK CLEARED. Bot has resumed trading operations."
+                logger.info(msg)
+                self.dp.send_msg(msg, always_send=True)
+                self.last_global_lock_msg = ""
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
