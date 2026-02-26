@@ -172,7 +172,7 @@ class CustomBestStrategy(IStrategy):
                 "lookback_period_candles": 288,  # 24 hours
                 "trade_limit": 1,
                 "stop_duration_candles": 24,  # ...Stop ALL trading for 2 hours to weather the storm.  # noqa: E501
-                "max_allowed_drawdown": 0.15,
+                "max_allowed_drawdown": 0.25,
             },
         ]
 
