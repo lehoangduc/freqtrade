@@ -95,10 +95,10 @@ class CustomBestStrategy(IStrategy):
     # Hyperopt found -0.13 is optimal; -0.05 was too tight, hit by normal 5m noise
     stoploss = -0.13
 
-    # Trailing stoploss — lock in profit at 1% once we're 2% up
+    # Trailing stoploss — lock in profit at 1% once we're 3% up (giving more room to trend)
     trailing_stop = True
     trailing_stop_positive = 0.01
-    trailing_stop_positive_offset = 0.02
+    trailing_stop_positive_offset = 0.03
     trailing_only_offset_is_reached = True
 
     # Enable ATR-based custom stoploss
@@ -502,7 +502,7 @@ class CustomBestStrategy(IStrategy):
                 & (dataframe["rsi"] > 55)  # Clear momentum
                 & (dataframe["rsi"] < 80)  # Not fully exhausted (pump RSI is 70-80)
                 & (dataframe["adx"] > 20)  # Trending (not sideways chop)
-                & (dataframe["volume"] > 0)
+                & (dataframe["volume"] > dataframe["volume_mean"] * 1.5)  # Require strong volume spike
                 & (dataframe["rsi_1h"] > 45)  # 1h trend strength
             ),
             ["enter_long", "enter_tag"],
@@ -664,6 +664,12 @@ class CustomBestStrategy(IStrategy):
         if trade.enter_tag == "momentum_breakout" and current_profit > 0.008:
             return "momentum_take_profit_08"
 
+        # --- BULL TRAP EXIT (Momentum trades failing quickly) ---
+        if trade.enter_tag == "momentum_breakout" and trade_duration < 15:
+            # If RSI drops below 50 within 15 mins of entry, exit immediately
+            if last_candle["rsi"] < 50:
+                return "momentum_bull_trap_exit"
+
         # --- Tag-Specific Exit Logic ---
         momentum_tags = ["momentum_breakout", "simple_entry"]
         dip_buy_tags = ["sniper_dip", "bb_bounce", "volume_reversal"]
@@ -713,9 +719,9 @@ class CustomBestStrategy(IStrategy):
 
         last_candle = dataframe.iloc[-1]
 
-        # Use 1.5x the Average True Range as the acceptable volatility cushion (reduced from 2.5x)
+        # Use 2.0x the Average True Range as the acceptable volatility cushion (increased from 1.5x)
         atr_value = last_candle["atr"]
-        atr_stop_distance = atr_value * 1.5
+        atr_stop_distance = atr_value * 2.0
         # Minimum 1% buffer to avoid catching normal volatility
         stoploss_pct = atr_stop_distance / current_rate
         if stoploss_pct < 0.01:
